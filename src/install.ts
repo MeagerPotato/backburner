@@ -198,7 +198,7 @@ export function uninstallSchedule(): string {
 
 export function initConfig(): { config: Config; created: boolean } {
   const created = !existsSync(paths.config());
-  let config = pinClaudePath(loadConfig());
+  const config = { ...pinClaudePath(loadConfig()), integration: { node: process.execPath, cli: cliPath() } };
   saveConfig(config);
   return { config, created };
 }
