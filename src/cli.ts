@@ -13,6 +13,7 @@ import {
   wireClaudeSettings,
 } from "./install.js";
 import { serve } from "./mcp.js";
+import { setupWizard } from "./setup.js";
 import { paths } from "./paths.js";
 import { setMode, touchActivity } from "./presence.js";
 import { probeUsage } from "./runner.js";
@@ -27,6 +28,7 @@ import { WEEKDAYS } from "./time.js";
 const HELP = `backburner: pace your Claude plan's weekly usage and spend the slack on queued tasks
 
 Setup
+  backburner setup                Answer a few questions and install everything
   backburner init                 Create config, hook into Claude Code's status line
   backburner schedule install     Run the queue in the background every 10 minutes
   backburner schedule uninstall   Stop background runs
@@ -122,6 +124,11 @@ async function main(argv: string[]): Promise<void> {
     case "-h":
       console.log(HELP);
       return;
+
+    case "setup": {
+      await setupWizard();
+      return;
+    }
 
     case "init": {
       const { config: base, created } = initConfig();

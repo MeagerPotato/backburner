@@ -26,8 +26,15 @@ Needs Node 20+ and Claude Code signed in with a Pro or Max plan.
 
 ```
 npm install -g github:MeagerPotato/backburner
+backburner setup
+```
+
+`setup` asks for your time zone, daily reserves, weekly cap and release hour, then does everything below. To do it by hand instead:
+
+```
 backburner init
 backburner schedule install
+backburner desktop install   # optional: queue tasks from regular Claude chat
 ```
 
 `init` writes `~/.backburner/config.json` and points Claude Code's status line at Backburner, which is how it reads your usage. If you already had a status line command (a usage meter mod, for example), it keeps running and its output still shows first. Your old settings file is backed up next to the original.
