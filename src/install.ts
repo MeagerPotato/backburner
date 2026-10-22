@@ -202,3 +202,37 @@ export function initConfig(): { config: Config; created: boolean } {
   saveConfig(config);
   return { config, created };
 }
+
+// ---------- Claude Desktop chat (MCP) ----------
+
+/** Where Claude Desktop keeps its MCP server list. */
+export function desktopConfigPath(): string {
+  if (process.platform === "win32") return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
+  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  return join(homedir(), ".config", "Claude", "claude_desktop_config.json");
+}
+
+type DesktopConfig = { mcpServers?: Record<string, { command: string; args?: string[] }>; [k: string]: unknown };
+
+/** Adds Backburner's MCP server to Claude Desktop so regular chats can queue tasks. */
+export function installDesktopMcp(): { file: string; backup?: string } {
+  const file = desktopConfigPath();
+  const cfg = readJson<DesktopConfig>(file, {});
+  let backup: string | undefined;
+  if (existsSync(file)) {
+    backup = `${file}.backburner-backup-${Date.now()}`;
+    copyFileSync(file, backup);
+  }
+  cfg.mcpServers = { ...cfg.mcpServers, backburner: { command: process.execPath, args: [cliPath(), "mcp"] } };
+  writeJson(file, cfg);
+  return { file, backup };
+}
+
+export function uninstallDesktopMcp(): boolean {
+  const file = desktopConfigPath();
+  const cfg = readJson<DesktopConfig>(file, {});
+  if (!cfg.mcpServers?.backburner) return false;
+  delete cfg.mcpServers.backburner;
+  writeJson(file, cfg);
+  return true;
+}
