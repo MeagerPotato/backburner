@@ -1,0 +1,35 @@
+{
+  "name": "backburner-cc",
+  "version": "0.1.0",
+  "description": "Paces your Claude plan's weekly usage: daily reserves, a weekly cap, and a task queue that runs when you have usage to spare.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "backburner": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "claude-code",
+    "usage",
+    "rate-limits",
+    "queue",
+    "scheduler"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
