@@ -39,6 +39,10 @@ export interface Config {
     /** Push the branch and open a draft PR with `gh` after a coding task. */
     openDraftPr: boolean;
   };
+  /** What the Claude Code mod does when your own use runs past today's reserve. */
+  guard: "off" | "warn" | "block";
+  /** Where Node and this CLI live, so the Claude Code mod can call it. Set by `init`. */
+  integration?: { node: string; cli: string };
   statusline: {
     /** Your previous status line command. Backburner runs it and prints its output first. */
     chain?: string;
@@ -78,6 +82,7 @@ export const DEFAULT_CONFIG: Config = {
     ],
     openDraftPr: true,
   },
+  guard: "warn",
   statusline: { showLine: true },
 };
 
@@ -110,6 +115,7 @@ export function validate(c: Config): string[] {
   } catch {
     errors.push(`timezone "${c.timezone}" is not a valid IANA time zone`);
   }
+  if (!["off", "warn", "block"].includes(c.guard)) errors.push('guard must be "off", "warn" or "block"');
   const weekly = WEEKDAYS.reduce((s, d) => s + c.reserves[d], 0);
   if (weekly > c.weeklyCap) errors.push(`reserves add up to ${weekly}%, more than the ${c.weeklyCap}% cap, so the queue could never run`);
   return errors;
