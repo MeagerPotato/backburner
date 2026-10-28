@@ -306,8 +306,6 @@ Everything is in `~/.backburner/` (`%USERPROFILE%\.backburner\` on Windows). Set
 
 **Reports look garbled in Windows PowerShell** (for example `â€”` where a dash should be). Reports are UTF-8, and Windows PowerShell 5.1 reads files as ANSI by default. Use `Get-Content <file> -Encoding UTF8`, PowerShell 7, or open the `.md` file in an editor.
 
-**`DeprecationWarning: [DEP0190]` on Windows.** Node 24 prints this when Backburner starts `claude` through `cmd.exe`, which Windows needs for npm's `.cmd` shims. It's harmless; the prompt goes in on stdin, never on the command line.
-
 **Check the background job.** Windows: `schtasks /Query /TN Backburner`. macOS: `launchctl list | grep backburner`. Linux: `systemctl --user status backburner.timer`.
 
 ## Terms of service

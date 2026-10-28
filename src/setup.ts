@@ -73,9 +73,10 @@ export async function setupWizard(): Promise<void> {
     }
 
     console.log(`
-Last step: add the toggle and /queue commands to Claude Code. In a terminal session type:
+Last step: add the toggle and /queue commands to Claude Code. In a terminal, run:
 
-  /plugin install backburner --marketplace MeagerPotato/backburner
+  claude plugin marketplace add MeagerPotato/backburner
+  claude plugin install backburner@backburner
 
 In the Desktop app: + next to the prompt box, Plugins, Add marketplace "MeagerPotato/backburner", Add plugin.
 
