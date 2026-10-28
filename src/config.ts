@@ -1,6 +1,7 @@
 import { paths } from "./paths.js";
 import { readJson, writeJson } from "./store.js";
 import { systemTimeZone, WEEKDAYS, type Weekday } from "./time.js";
+import { PROVIDERS, type Provider } from "./usage.js";
 
 export type Size = "small" | "medium" | "large";
 
@@ -38,6 +39,19 @@ export interface Config {
     codeTools: string[];
     /** Push the branch and open a draft PR with `gh` after a coding task. */
     openDraftPr: boolean;
+  };
+  /**
+   * Which plans the queue may spend, in order. A task with no engine of its own runs on
+   * the first one here that has room. `setup` adds Codex when it finds it installed.
+   */
+  engines: Provider[];
+  /** How queued tasks run on Codex (OpenAI's coding agent, on a ChatGPT plan). */
+  codex: {
+    /** Path or name of the Codex CLI. */
+    path: string;
+    model?: string;
+    /** Let research tasks search the web. */
+    search: boolean;
   };
   /** What the Claude Code mod does when your own use runs past today's reserve. */
   guard: "off" | "warn" | "block";
@@ -82,6 +96,8 @@ export const DEFAULT_CONFIG: Config = {
     ],
     openDraftPr: true,
   },
+  engines: ["claude"],
+  codex: { path: "codex", search: true },
   guard: "warn",
   statusline: { showLine: true },
 };
@@ -116,6 +132,9 @@ export function validate(c: Config): string[] {
     errors.push(`timezone "${c.timezone}" is not a valid IANA time zone`);
   }
   if (!["off", "warn", "block"].includes(c.guard)) errors.push('guard must be "off", "warn" or "block"');
+  if (!Array.isArray(c.engines) || c.engines.length === 0 || c.engines.some((e) => !PROVIDERS.includes(e))) {
+    errors.push(`engines must list one or more of: ${PROVIDERS.join(", ")}`);
+  }
   const weekly = WEEKDAYS.reduce((s, d) => s + c.reserves[d], 0);
   if (weekly > c.weeklyCap) errors.push(`reserves add up to ${weekly}%, more than the ${c.weeklyCap}% cap, so the queue could never run`);
   return errors;
@@ -139,7 +158,7 @@ export function setConfigValue(c: Config, key: string, raw: string): Config {
     node = node[p] as Plain;
   }
   const leaf = parts.at(-1)!;
-  if (!(leaf in node) && !(parts[0] === "run" && leaf === "model") && !(parts[0] === "statusline" && leaf === "chain")) {
+  if (!(leaf in node) && !((parts[0] === "run" || parts[0] === "codex") && leaf === "model") && !(parts[0] === "statusline" && leaf === "chain")) {
     throw new Error(`Unknown config key: ${key}`);
   }
   const current = node[leaf];

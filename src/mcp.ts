@@ -6,15 +6,16 @@ import { cancelTask, readResult, retryTask, updateTask } from "./manage.js";
 import { setMode, type PresenceMode } from "./presence.js";
 import { summary } from "./summary.js";
 import { compareTasks, estimate, loadRuns, loadTasks, newId, saveTasks, titleFrom, type Task } from "./tasks.js";
+import { PROVIDER_NAMES } from "./usage.js";
 
 // A minimal MCP server over stdio (newline-delimited JSON-RPC), so regular Claude
 // chat in the Desktop app can run Backburner for the user. No SDK dependency.
 
 const PROTOCOL = "2025-06-18";
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 /** Sent to Claude when the chat connects, so it can manage Backburner without the user explaining it. */
-export const INSTRUCTIONS = `Backburner is a program on the user's own computer that paces their Claude plan's weekly usage. It holds a small daily reserve for the user's own chats, never lets queued work push weekly usage past a cap (default 95%), and runs queued tasks unattended with Claude Code (\`claude -p\`) when there's usage to spare: overnight, while the user is away, or in the last hours before the weekly reset.
+export const INSTRUCTIONS = `Backburner is a program on the user's own computer that paces the weekly usage of their AI coding plans: Claude (run with Claude Code) and, if they set it up, ChatGPT's Codex. It holds a small daily reserve for the user's own chats, never lets queued work push weekly usage past a cap (default 95%), and runs queued tasks unattended when there's usage to spare: overnight, while the user is away, or in the last hours before the weekly reset. The user doesn't have to come back and say "continue": the queue keeps going on its own.
 
 Use these tools to manage it for the user, so they don't have to. Act on clear requests directly; don't ask the user to run commands.
 
@@ -24,15 +25,16 @@ Queueing (add_task):
 - mode "research" (default) can search the web and read files, and ends in a markdown report. mode "code" edits a git repository on the user's computer on its own branch and can open a draft PR; it needs dir, the repo's absolute path. Ask for the path if you don't know it.
 - size: small (~1% of the week, ~10 min) for a quick lookup, medium (~3%, ~30 min) for a researched summary or focused change, large (~8%, ~90 min) for deep research or a multi-file feature. Pick one yourself.
 - priority 1 (low) to 5 (high), default 3. Set a deadline (YYYY-MM-DD) only if the user gives one. Tasks run by earliest deadline, then priority, then age.
+- engine: leave it out so the task runs on whichever plan has room. Set "claude" or "codex" only when the user asks for one.
 - After adding, tell the user the title, size, and the estimate the tool returned.
 
 Managing: list_tasks shows the queue (all: true includes finished tasks). update_task changes a queued task. retry_task puts a failed, cancelled or finished task back in the queue. cancel_task removes one. Ids can be shortened to a unique prefix. get_result returns a finished task's report or its branch and PR.
 
-Budget and presence: get_budget shows weekly usage, what the queue may spend now, and why the next task is or isn't running. set_presence "away" lets the queue run freely (use it when the user says they're leaving, going to bed, or want the queue to start); "active" holds it back while they work; "auto" (default) decides from idle time.
+Budget and presence: get_budget shows weekly usage for each plan, what the queue may spend now, and why the next task is or isn't running. set_presence "away" lets the queue run freely (use it when the user says they're leaving, going to bed, or want the queue to start); "active" holds it back while they work; "auto" (default) decides from idle time.
 
-Settings: get_settings shows them; change_setting changes one. Common keys: reserves.mon ... reserves.sun (weekly % held each day for the user, default 5 weekdays and 3 weekends), weeklyCap, releaseHour (local hour when today's unused reserve goes to the queue), timezone, run.model, run.timeoutMinutes, guard (off, warn or block). Tool lists and the Claude CLI path can only be changed by the user in a terminal.
+Settings: get_settings shows them; change_setting changes one. Common keys: reserves.mon ... reserves.sun (weekly % held each day for the user, default 5 weekdays and 3 weekends), weeklyCap, releaseHour (local hour when today's unused reserve goes to the queue), timezone, run.model, codex.model, run.timeoutMinutes, guard (off, warn or block). Which plans the queue uses, tool lists and program paths can only be changed by the user in a terminal.
 
-Nothing runs the instant a task is queued: a background job checks every 10 minutes. If get_budget says there's no usage reading yet, the user needs to open Claude Code once or run \`backburner probe\`.`;
+Nothing runs the instant a task is queued: a background job checks every 10 minutes. If get_budget says there's no usage reading yet, the user needs to use Claude Code or Codex once, or run \`backburner probe\`.`;
 
 /** Settings chat may change. Tool permissions and executable paths stay terminal-only. */
 const CHAT_SETTINGS = [
@@ -57,6 +59,8 @@ const CHAT_SETTINGS = [
   "estimates.large.pct",
   "estimates.large.minutes",
   "run.model",
+  "codex.model",
+  "codex.search",
   "run.timeoutMinutes",
   "run.openDraftPr",
   "guard",
@@ -70,7 +74,7 @@ export const TOOLS = [
   {
     name: "add_task",
     description:
-      "Queue a task for Backburner, which runs it later with Claude Code when the user has spare weekly usage. Write the prompt so it stands alone: the run has no access to this conversation. Use mode 'code' only for changes to a git repository on the user's computer, and give its absolute path as dir.",
+      "Queue a task for Backburner, which runs it later, unattended, with Claude Code or Codex when the user has spare weekly usage. Write the prompt so it stands alone: the run has no access to this conversation. Use mode 'code' only for changes to a git repository on the user's computer, and give its absolute path as dir.",
     inputSchema: {
       type: "object",
       properties: {
@@ -81,6 +85,7 @@ export const TOOLS = [
         priority: { type: "integer", minimum: 1, maximum: 5, description: "1 low to 5 high. Default 3." },
         deadline: { type: "string", description: "YYYY-MM-DD the user wants it done by, if any." },
         size: { type: "string", enum: ["small", "medium", "large"], description: SIZE_HELP },
+        engine: { type: "string", enum: ["claude", "codex"], description: "Leave out to run on whichever plan has room. Set only if the user asks for one." },
       },
       required: ["prompt"],
     },
@@ -104,6 +109,7 @@ export const TOOLS = [
         priority: { type: "integer", minimum: 1, maximum: 5 },
         deadline: { type: "string", description: "YYYY-MM-DD, or empty to clear." },
         size: { type: "string", enum: ["small", "medium", "large"], description: SIZE_HELP },
+        engine: { type: "string", enum: ["claude", "codex", "any"], description: "any: whichever plan has room." },
       },
       required: ["id"],
     },
@@ -125,7 +131,7 @@ export const TOOLS = [
   },
   {
     name: "get_budget",
-    description: "Show the user's weekly usage, reserves, how much the Backburner queue can spend right now, and why the next task is or isn't running.",
+    description: "Show the user's weekly usage on each plan, reserves, how much the Backburner queue can spend right now, and why the next task is or isn't running.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -163,8 +169,9 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : undefined);
 const SIZES = ["small", "medium", "large"];
 
 function describe(t: Task, config: Config, runs = loadRuns()): string {
-  const e = estimate(t.size, runs, config);
-  return `${t.id} [${t.status}] P${t.priority} ${t.mode} ${t.size} ~${e.pct}% ~${e.minutes}min${t.deadline ? ` due ${t.deadline}` : ""}: ${t.title}${t.result ? ` -> ${t.result}` : ""}${t.note ? ` (note: ${t.note})` : ""}`;
+  const e = estimate(t.size, runs, config, t.engine ?? config.engines[0]);
+  const on = t.engine ? ` on ${PROVIDER_NAMES[t.engine]}` : "";
+  return `${t.id} [${t.status}] P${t.priority} ${t.mode} ${t.size}${on} ~${e.pct}% ~${e.minutes}min${t.deadline ? ` due ${t.deadline}` : ""}: ${t.title}${t.result ? ` -> ${t.result}` : ""}${t.note ? ` (note: ${t.note})` : ""}`;
 }
 
 export function callTool(name: string, args: Args): ReturnType<typeof text> {
@@ -179,6 +186,10 @@ export function callTool(name: string, args: Args): ReturnType<typeof text> {
       const priority = Number.isInteger(args.priority) ? Math.min(5, Math.max(1, args.priority as number)) : 3;
       const size = (SIZES.includes(String(args.size)) ? args.size : "medium") as Size;
       const deadline = typeof args.deadline === "string" && !Number.isNaN(Date.parse(args.deadline)) ? args.deadline : undefined;
+      const engine = args.engine === "claude" || args.engine === "codex" ? args.engine : undefined;
+      if (engine && !config.engines.includes(engine)) {
+        return text(`${PROVIDER_NAMES[engine]} isn't set up for Backburner. It uses: ${config.engines.map((p) => PROVIDER_NAMES[p]).join(", ")}. Leave engine out, or ask the user to run \`backburner setup\`.`, true);
+      }
       const task: Task = {
         id: newId(),
         title: str(args.title) || titleFrom(prompt),
@@ -188,13 +199,15 @@ export function callTool(name: string, args: Args): ReturnType<typeof text> {
         priority,
         deadline,
         size,
+        ...(engine ? { engine } : {}),
         status: "queued",
         createdAt: Date.now(),
         attempts: 0,
       };
       saveTasks([...loadTasks(), task]);
-      const e = estimate(size, loadRuns(), config);
-      return text(`Queued ${task.id}: "${task.title}" (${mode}, ${size}, priority ${priority}, about ${e.pct}% of the week and ${e.minutes} min).`);
+      const e = estimate(size, loadRuns(), config, engine ?? config.engines[0]);
+      const on = engine ? `, on ${PROVIDER_NAMES[engine]}` : config.engines.length > 1 ? ", on whichever plan has room" : "";
+      return text(`Queued ${task.id}: "${task.title}" (${mode}, ${size}, priority ${priority}${on}, about ${e.pct}% of the week and ${e.minutes} min).`);
     }
     case "list_tasks": {
       const runs = loadRuns();
@@ -213,6 +226,7 @@ export function callTool(name: string, args: Args): ReturnType<typeof text> {
         priority: args.priority === undefined ? undefined : Number(args.priority),
         deadline: typeof args.deadline === "string" ? args.deadline : undefined,
         size: args.size === undefined ? undefined : String(args.size),
+        engine: args.engine === undefined ? undefined : String(args.engine),
       });
       return r.ok ? text(`Updated ${describe(r.task, config)}`) : text(r.error, true);
     }
@@ -230,22 +244,28 @@ export function callTool(name: string, args: Args): ReturnType<typeof text> {
     }
     case "get_budget": {
       const s = summary(Date.now(), { idle: false });
-      const next = s.next.run ? `Next: run ${s.next.taskId} "${s.next.title}" at the next check` : `Next: waiting (${s.next.why})`;
-      if (!s.budget) return text(`No weekly usage reading yet. It appears after the user opens Claude Code or runs \`backburner probe\`.\n${next}`);
-      const b = s.budget;
       const when = (ms: number) => new Date(ms).toLocaleString("en-US", { timeZone: s.timezone, weekday: "short", hour: "numeric", minute: "2-digit" });
-      return text(
-        [
-          `Weekly usage: ${b.used}% (cap ${b.cap}%)${s.weekly ? `, resets ${when(s.weekly.resetsAt)}` : ""}`,
-          ...(s.fiveHour ? [`5-hour window: ${Math.round(s.fiveHour.pct)}%, resets ${when(s.fiveHour.resetsAt)}`] : []),
+      const multi = s.engines.length > 1;
+      const blocks = s.engines.map((e) => {
+        const head = multi ? [`${e.name}:`] : [];
+        const next = e.next.run ? `Next: run ${e.next.taskId} "${e.next.title}" at the next check` : `Next: waiting (${e.next.why})`;
+        if (!e.budget) {
+          const how = e.provider === "codex" ? "the user runs Codex once" : "the user opens Claude Code";
+          return [...head, `No weekly usage reading yet. It appears after ${how} or runs \`backburner probe\`.`, next].join("\n");
+        }
+        const b = e.budget;
+        return [
+          ...head,
+          `Weekly usage: ${b.used}% (cap ${b.cap}%)${e.weekly ? `, resets ${when(e.weekly.resetsAt)}` : ""}`,
+          ...(e.fiveHour ? [`5-hour window: ${Math.round(e.fiveHour.pct)}%, resets ${when(e.fiveHour.resetsAt)}`] : []),
           `Today: ${b.personalToday}% used of a ${b.todayReserve}% reserve, ${b.todayHeld}% still held${b.released ? " (released for tonight)" : ""}`,
           `Later days: ${b.futureHeld}% held${b.sweeping ? " (final sweep: all freed)" : ""}`,
           `Queue can spend now: ${b.available}%`,
-          `Queued: ${s.queued} task(s), about ${s.queuedPct}%`,
-          `Presence: ${s.presence.effective} (${s.presence.mode}: ${s.presence.reason})`,
+          `Queued for this plan: ${e.queued} task(s), about ${e.queuedPct}%`,
           next,
-        ].join("\n"),
-      );
+        ].join("\n");
+      });
+      return text([...blocks, `Presence: ${s.presence.effective} (${s.presence.mode}: ${s.presence.reason})`].join("\n\n"));
     }
     case "set_presence": {
       const mode = String(args.mode ?? "");
@@ -254,8 +274,13 @@ export function callTool(name: string, args: Args): ReturnType<typeof text> {
       return text(`Presence set to ${mode}.`);
     }
     case "get_settings": {
-      const { integration: _i, statusline, run, ...rest } = config;
-      const shown = { ...rest, run: { model: run.model ?? "(Claude Code's default)", timeoutMinutes: run.timeoutMinutes, openDraftPr: run.openDraftPr }, statusline: { showLine: statusline.showLine } };
+      const { integration: _i, statusline, run, codex, ...rest } = config;
+      const shown = {
+        ...rest,
+        run: { model: run.model ?? "(Claude Code's default)", timeoutMinutes: run.timeoutMinutes, openDraftPr: run.openDraftPr },
+        ...(config.engines.includes("codex") ? { codex: { model: codex.model ?? "(Codex's default)", search: codex.search } } : {}),
+        statusline: { showLine: statusline.showLine },
+      };
       return text(JSON.stringify(shown, null, 2));
     }
     case "change_setting": {

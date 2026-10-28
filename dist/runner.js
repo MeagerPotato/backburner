@@ -1,9 +1,9 @@
 import { execFileSync, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "./paths.js";
 import { log } from "./store.js";
-import { isRejection, parseStreamEvent, recordSnapshot } from "./usage.js";
+import { isRejection, parseStreamEvent, PROVIDER_NAMES, readCodexUsage, recordSnapshot } from "./usage.js";
 const isWin = process.platform === "win32";
 function quote(arg) {
     if (!/[\s"&|<>^()]/.test(arg))
@@ -105,12 +105,121 @@ export function runClaude(opts) {
         child.stdin.end(opts.prompt);
     });
 }
-/** Fetch fresh usage numbers. Stops Claude the moment the first reading arrives. */
-export async function probeUsage(config) {
+/**
+ * Runs the unmodified Codex CLI headless (`codex exec`). Research runs get a read-only
+ * sandbox, coding runs may write only inside their worktree, and nothing asks for
+ * approval. Codex has no usage numbers in its output; they're read from the session
+ * log it writes, right after the run.
+ */
+export function runCodex(opts) {
+    const c = opts.config.codex;
+    const last = join(paths.results(), `.codex-last-${process.pid}-${Date.now()}.txt`);
+    const args = [
+        ...(c.search && opts.mode === "research" ? ["--search"] : []),
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "-s",
+        opts.mode === "code" ? "workspace-write" : "read-only",
+        "-C",
+        opts.cwd,
+        "-o",
+        last,
+        ...(c.model ? ["-m", c.model] : []),
+        "-",
+    ];
+    return new Promise((resolve) => {
+        const cmd = launch(c.path, args);
+        const child = spawn(cmd.file, cmd.args, { cwd: opts.cwd, shell: cmd.shell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const out = opts.logFile ? createWriteStream(opts.logFile, { flags: "a" }) : undefined;
+        const state = { code: null, isError: false, rejected: false, timedOut: false };
+        let buf = "";
+        let finished = false;
+        let lastError;
+        const timer = opts.timeoutMs
+            ? setTimeout(() => {
+                state.timedOut = true;
+                child.kill();
+            }, opts.timeoutMs)
+            : undefined;
+        const fail = (message) => {
+            state.isError = true;
+            state.text = message;
+            if (LIMIT_TEXT.test(message))
+                state.rejected = true;
+        };
+        const onLine = (line) => {
+            if (!line.trim())
+                return;
+            out?.write(line + "\n");
+            let e;
+            try {
+                e = JSON.parse(line);
+            }
+            catch {
+                return;
+            }
+            if (e.type === "item.completed" && e.item?.type === "agent_message" && typeof e.item.text === "string")
+                state.text = e.item.text;
+            else if (e.type === "turn.completed")
+                finished = true;
+            else if (e.type === "turn.failed")
+                fail(e.error?.message ?? lastError ?? "Codex turn failed");
+            // Codex also reports errors it recovers from ("Reconnecting... 2/5"); only remember them.
+            else if (e.type === "error" && typeof e.message === "string")
+                lastError = e.message;
+        };
+        child.stdout.on("data", (chunk) => {
+            buf += chunk.toString("utf8");
+            let nl;
+            while ((nl = buf.indexOf("\n")) >= 0) {
+                onLine(buf.slice(0, nl));
+                buf = buf.slice(nl + 1);
+            }
+        });
+        child.stderr.on("data", (chunk) => out?.write(`[stderr] ${chunk.toString("utf8")}`));
+        child.on("error", (err) => {
+            log(`could not start codex: ${err.message}`);
+            fail(`Could not start "${c.path}": ${err.message}`);
+        });
+        child.on("close", (code) => {
+            if (buf)
+                onLine(buf);
+            if (timer)
+                clearTimeout(timer);
+            out?.end();
+            state.code = code;
+            // Codex exits 0 even when the turn failed, so a run only counts if the turn finished.
+            if (!finished && !state.isError && !state.timedOut)
+                fail(lastError ?? "Codex stopped before finishing the task");
+            else if (finished && !state.isError) {
+                const text = safe(() => readFileSync(last, "utf8").trim());
+                if (text)
+                    state.text = text;
+            }
+            safe(() => rmSync(last, { force: true }));
+            const reading = readCodexUsage();
+            if (reading) {
+                recordSnapshot(reading);
+                state.lastSnapshot = reading;
+            }
+            resolve(state);
+        });
+        child.stdin.end(opts.prompt);
+    });
+}
+/** Fetch fresh usage numbers for one plan with the smallest request that returns them. */
+export async function probeUsage(config, provider = "claude") {
     mkdirSync(paths.results(), { recursive: true });
+    const prompt = "Reply with the single word: ok";
+    if (provider === "codex") {
+        const run = await runCodex({ config, prompt, cwd: paths.results(), mode: "research", timeoutMs: 120_000 });
+        return run.lastSnapshot;
+    }
+    // Stops Claude the moment the first reading arrives.
     const run = await runClaude({
         config,
-        prompt: "Reply with the single word: ok",
+        prompt,
         cwd: paths.results(),
         allow: [],
         model: "haiku",
@@ -148,16 +257,19 @@ function codePreamble(branch) {
 Task:
 `;
 }
-export async function runTask(task, runId, config) {
+export async function runTask(task, runId, config, provider = "claude") {
     const dir = join(paths.results(), task.id);
     mkdirSync(dir, { recursive: true });
     const logFile = join(dir, `${runId}.jsonl`);
     const timeoutMs = config.run.timeoutMinutes * 60_000;
+    const agent = (prompt, cwd) => provider === "codex"
+        ? runCodex({ config, prompt, cwd, mode: task.mode, logFile, timeoutMs })
+        : runClaude({ config, prompt, cwd, allow: task.mode === "code" ? config.run.codeTools : config.run.researchTools, logFile, timeoutMs });
     if (task.mode === "research") {
-        const run = await runClaude({ config, prompt: RESEARCH_PREAMBLE + task.prompt, cwd: task.dir, allow: config.run.researchTools, logFile, timeoutMs });
+        const run = await agent(RESEARCH_PREAMBLE + task.prompt, task.dir);
         const outcome = classify(run);
         const report = join(dir, `${runId}.md`);
-        writeFileSync(report, `# ${task.title}\n\n${run.text ?? "(no output)"}\n`);
+        writeFileSync(report, `# ${task.title}\n\n_Run by ${PROVIDER_NAMES[provider]}._\n\n${run.text ?? "(no output)"}\n`);
         return { outcome, text: run.text, lastSnapshot: run.lastSnapshot, result: report };
     }
     // Coding task: work in a fresh worktree on its own branch, never on your checkout.
@@ -173,9 +285,9 @@ export async function runTask(task, runId, config) {
         return { outcome: "failed", note: `git worktree add failed: ${e.message}` };
     }
     const base = safe(() => git(tree, ["rev-parse", "HEAD"]));
-    const run = await runClaude({ config, prompt: codePreamble(branch) + task.prompt, cwd: tree, allow: config.run.codeTools, logFile, timeoutMs });
+    const run = await agent(codePreamble(branch) + task.prompt, tree);
     const outcome = classify(run);
-    writeFileSync(join(dir, `${runId}.md`), `# ${task.title}\n\nBranch: ${branch}\n\n${run.text ?? "(no output)"}\n`);
+    writeFileSync(join(dir, `${runId}.md`), `# ${task.title}\n\nBranch: ${branch}. Run by ${PROVIDER_NAMES[provider]}.\n\n${run.text ?? "(no output)"}\n`);
     commitAll(tree, task);
     let result = `branch ${branch}`;
     let note;
@@ -186,7 +298,7 @@ export async function runTask(task, runId, config) {
     else if (config.run.openDraftPr && safe(() => git(tree, ["remote", "get-url", "origin"])) && hasCommand("gh")) {
         try {
             git(tree, ["push", "-u", "origin", branch]);
-            const body = `Opened by Backburner from a queued task.\n\n${(run.text ?? "").slice(0, 4000)}`;
+            const body = `Opened by Backburner from a queued task, run by ${PROVIDER_NAMES[provider]}.\n\n${(run.text ?? "").slice(0, 4000)}`;
             const url = execFileSync("gh", ["pr", "create", "--draft", "--title", task.title, "--body", body, "--head", branch], {
                 cwd: tree,
                 encoding: "utf8",

@@ -13,7 +13,7 @@ const HOOK_CMD = "backburner hook prompt";
 export function cliPath() {
     return join(dirname(fileURLToPath(import.meta.url)), "cli.js");
 }
-function which(cmd) {
+export function which(cmd) {
     try {
         const out = execFileSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8", windowsHide: true });
         const hits = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);

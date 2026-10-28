@@ -1,6 +1,8 @@
 import { createInterface } from "node:readline/promises";
 import { loadConfig, saveConfig, validate, type Config } from "./config.js";
-import { initConfig, installDesktopMcp, installSchedule, wireClaudeSettings } from "./install.js";
+import { AGENTS } from "./agents.js";
+import { initConfig, installSchedule } from "./install.js";
+import type { Provider } from "./usage.js";
 import { WEEKDAYS, type Weekday } from "./time.js";
 
 const DAY_NAMES: Record<Weekday, string> = {
@@ -39,9 +41,22 @@ export async function setupWizard(): Promise<void> {
     const { config: base } = initConfig();
     let config: Config = structuredClone(base);
 
+    const found = AGENTS.filter((a) => a.installed());
+    console.log(found.length ? `Found on this computer: ${found.map((a) => a.name).join(", ")}.` : "Didn't find Claude Code, Codex or another AI tool on this computer.");
+    const hasClaude = found.some((a) => a.id === "claude-code");
+    const hasCodex = found.some((a) => a.id === "codex");
+    const engines: Provider[] = [];
+    if (hasClaude && (await yes("\nRun queued tasks on your Claude plan (with Claude Code)?"))) engines.push("claude");
+    if (hasCodex && (await yes(`${hasClaude ? "" : "\n"}Run queued tasks on your ChatGPT plan (with Codex)?`))) engines.push("codex");
+    if (engines.length === 0) {
+      console.log("\nThe queue needs Claude Code or Codex to run tasks. Install one, sign in, then run `backburner setup` again. Keeping Claude as the default for now.");
+      engines.push("claude");
+    }
+    config.engines = engines;
+
     config.timezone = await ask("Your time zone", config.timezone);
 
-    console.log("\nHow much of your weekly usage do you use yourself on a typical day (chat, coursework, quick questions)?");
+    console.log(`\nHow much of your weekly usage do you use yourself on a typical day (chat, coursework, quick questions)?${engines.length > 1 ? " The same reserve is held on each plan." : ""}`);
     const sameEveryWeekday = await yes("Same amount Monday to Friday?");
     if (sameEveryWeekday) {
       const weekday = await pct("  Weekdays, % per day", config.reserves.mon);
@@ -63,15 +78,28 @@ export async function setupWizard(): Promise<void> {
       config = loadConfig();
     } else saveConfig(config);
 
-    const wired = wireClaudeSettings(config);
-    saveConfig(wired.config);
-    if (wired.result.changed) console.log(`\nHooked into Claude Code's status line${wired.result.backup ? ` (backup: ${wired.result.backup})` : ""}.`);
+    console.log("\nConnect Backburner to your AI tools so you can queue and manage tasks by asking them.");
+    for (const a of found) {
+      if (!(await yes(`  ${a.name}: ${a.what}?`))) continue;
+      try {
+        const r = a.connect(config);
+        config = r.config;
+        console.log(`  ${r.message}`);
+      } catch (e) {
+        console.log(`  Couldn't connect ${a.name}: ${(e as Error).message.split("\n")[0]}`);
+      }
+    }
+    // Connecting Codex turns on its plan; keep the answer given above.
+    config.engines = engines;
+    saveConfig(config);
 
     if (await yes("\nRun the queue in the background every 10 minutes?")) attempt("set up the background schedule", () => installSchedule());
-    if (await yes("Let regular Claude Desktop chats queue tasks?")) {
-      attempt("add Backburner to Claude Desktop", () => `Added to ${installDesktopMcp().file}. Quit and reopen Claude Desktop to load it.`);
-    }
 
+    const example = 'backburner add "Summarize this week\'s AI news with links" --size small';
+    if (!hasClaude) {
+      console.log(`\nDone. Try: ${example}\nOr ask ${found.find((a) => a.id !== "claude-desktop")?.name ?? "your AI tool"} to "put this on the backburner".`);
+      return;
+    }
     console.log(`
 Last step: add the toggle and /queue commands to Claude Code. In a terminal, run:
 
@@ -80,7 +108,7 @@ Last step: add the toggle and /queue commands to Claude Code. In a terminal, run
 
 In the Desktop app: + next to the prompt box, Plugins, Add marketplace "MeagerPotato/backburner", Add plugin.
 
-Then try: backburner add "Summarize this week's AI news with links" --size small`);
+Then try: ${example}`);
   } finally {
     rl.close();
   }

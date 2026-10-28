@@ -1,7 +1,7 @@
 {
   "name": "backburner-cc",
-  "version": "0.2.0",
-  "description": "Paces your Claude plan's weekly usage: daily reserves, a weekly cap, and a task queue that runs when you have usage to spare.",
+  "version": "0.3.0",
+  "description": "Paces your Claude or ChatGPT (Codex) plan's weekly usage: daily reserves, a weekly cap, and a task queue that runs on its own when you have usage to spare.",
   "license": "MIT",
   "author": "Allen Hsieh",
   "homepage": "https://github.com/MeagerPotato/backburner#readme",
@@ -36,7 +36,10 @@
     "rate-limits",
     "queue",
     "scheduler",
-    "mcp"
+    "mcp",
+    "codex",
+    "openai",
+    "chatgpt"
   ],
   "devDependencies": {
     "@types/node": "^22.10.0",
