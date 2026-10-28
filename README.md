@@ -304,13 +304,15 @@ cd backburner
 npm install
 npm test                 # unit tests
 npm run typecheck
-npm run build            # compiles to dist/
+npm run build            # compiles to dist/ (commit dist/ with your change)
 npm link                 # puts your local build on PATH as `backburner`
 ```
 
 The mod lives in `plugin/`. Check it with `claude plugin validate plugin` and `claude plugin test plugin`.
 
 Set `BACKBURNER_HOME` to a scratch folder while testing so you don't touch your real queue.
+
+The compiled `dist/` folder is committed so that `npm install -g github:MeagerPotato/backburner` works without a build step. CI fails if it's out of date, so run `npm run build` before you commit.
 
 Issues and pull requests are welcome.
 
