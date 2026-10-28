@@ -67,7 +67,7 @@ Everything stays on your machine. There is no server and no account to create.
 | Where to get it | This GitHub repo. It isn't published to the npm registry, so install from the archive URL below. |
 | Runtime | Node.js 20 or newer, with no runtime dependencies |
 | Platforms | Windows 10/11, macOS, Linux |
-| Claude Code mod | Plugin `backburner` in the marketplace `MeagerPotato/backburner` (the `plugin/` folder): the prompt band, slash commands and the `backburner` skill |
+| Claude Code mod | Plugin `backburner` in the marketplace `MeagerPotato/backburner` (the `plugin/` folder): the prompt band, slash commands, Backburner's tools and the `manage-queue` skill |
 | Chat connector | A stdio MCP server built into the CLI (`backburner mcp`), added to Claude Desktop by `backburner desktop install` |
 | License | MIT |
 
@@ -214,7 +214,7 @@ backburner desktop install
 
 This adds Backburner as an MCP server in Claude Desktop (your old config is backed up first). Quit and reopen the app. The connector tells Claude what Backburner is and how to use it when the chat starts, so you don't need to explain anything.
 
-**Claude Code** (terminal, and the Desktop app's Code tab) uses the `backburner` skill that comes with the mod. Claude reads it when your request is about Backburner and runs the CLI for you.
+**Claude Code** (terminal, and the Desktop app's Code tab) gets the same tools from the mod, plus the `manage-queue` skill that tells Claude when and how to use them. Claude reads it when your request is about Backburner and manages the queue for you, with no shell commands to approve.
 
 Things you can say in either place:
 

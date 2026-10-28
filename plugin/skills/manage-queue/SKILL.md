@@ -1,13 +1,17 @@
 ---
-name: backburner
-description: Manage the user's Backburner queue and usage budget with the `backburner` CLI. Use when the user wants to queue work for later ("put this on the backburner", "do this overnight", "run this when I have usage left"), check, edit, retry or cancel queued tasks, read a finished task's report, say they're stepping away or back, ask how much weekly Claude usage they have left, or change Backburner's reserves, cap or other settings.
+name: manage-queue
+description: Manage the user's Backburner queue and usage budget with Backburner's tools (or its CLI). Use when the user wants to queue work for later ("put this on the backburner", "do this overnight", "run this when I have usage left"), check, edit, retry or cancel queued tasks, read a finished task's report, say they're stepping away or back, ask how much weekly Claude usage they have left, or change Backburner's reserves, cap or other settings.
 ---
 
 # Backburner
 
 Backburner runs on the user's computer and paces their Claude plan's weekly usage. It holds a daily reserve for the user's own chats, never lets queued work push weekly usage past a cap (default 95%), and runs queued tasks unattended with `claude -p` when there's usage to spare. A background job checks every 10 minutes, so nothing starts the moment it's queued.
 
-Handle requests yourself with the commands below. Don't hand the user commands to run unless something is broken.
+Handle requests yourself. Don't hand the user commands to run unless something is broken.
+
+## Tools
+
+The mod gives you Backburner's own tools, named `mcp__backburner__<name>` (load them with ToolSearch if they aren't listed yet): `add_task`, `list_tasks`, `update_task`, `retry_task`, `cancel_task`, `get_result`, `get_budget`, `set_presence`, `get_settings` and `change_setting`. Prefer them: they need no shell and no quoting. Use the `backburner` commands below when the tools aren't there, or for things they don't cover (`tick --dry-run`, `log`, `probe`).
 
 ## Queue a task
 
@@ -41,7 +45,7 @@ Ids can be shortened to any unique prefix. When a task finishes, summarize its r
 
 ## Presence
 
-`backburner away` when the user is leaving, going to bed, or wants the queue to start. `backburner active` while they're working and want it held back. `backburner auto` (default) decides from idle time. Presence only changes how much of the 5-hour window the queue may use; the weekly budget always applies.
+When the user says they're leaving, going to bed, or want the queue to start, set presence to away (`set_presence`, or `backburner away`) in the same turn, without asking. Set it to active while they're working and want the queue held back, and back to auto (the default, which decides from idle time) when they ask. Presence only changes how much of the 5-hour window the queue may use; the weekly budget always applies.
 
 ## Settings
 

@@ -59,7 +59,7 @@ const CHAT_SETTINGS = [
     "statusline.showLine",
 ];
 const SIZE_HELP = "small: a quick lookup or one-file tweak (~10 min). medium: a researched summary or a focused change (~30 min). large: deep research or a multi-file feature (~90 min).";
-const TOOLS = [
+export const TOOLS = [
     {
         name: "add_task",
         description: "Queue a task for Backburner, which runs it later with Claude Code when the user has spare weekly usage. Write the prompt so it stands alone: the run has no access to this conversation. Use mode 'code' only for changes to a git repository on the user's computer, and give its absolute path as dir.",
