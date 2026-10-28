@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { loadConfig, saveConfig, setConfigValue, validate } from "./config.js";
 import { initConfig, installDesktopMcp, installSchedule, pinClaudePath, uninstallDesktopMcp, uninstallSchedule, unwireClaudeSettings, wireClaudeSettings, } from "./install.js";
 import { cancelTask, readResult, retryTask, updateTask } from "./manage.js";
-import { serve } from "./mcp.js";
+import { callTool, INSTRUCTIONS, serve, TOOLS } from "./mcp.js";
 import { setupWizard } from "./setup.js";
 import { paths } from "./paths.js";
 import { setMode, touchActivity } from "./presence.js";
@@ -155,6 +155,32 @@ async function main(argv) {
             }
             else
                 fail("Usage: backburner desktop install|uninstall");
+            return;
+        }
+        case "tools": {
+            // For the Claude Code mod: the tools it registers, and the guidance Claude reads.
+            console.log(JSON.stringify({ instructions: INSTRUCTIONS, tools: TOOLS }));
+            return;
+        }
+        case "call": {
+            // For the Claude Code mod: run one tool with JSON arguments on stdin.
+            const name = rest[0];
+            if (!name)
+                fail("Usage: backburner call <tool> < args.json");
+            const raw = (await readStdin()).trim();
+            let args = {};
+            try {
+                args = raw ? JSON.parse(raw) : {};
+            }
+            catch {
+                fail("call expects JSON arguments on stdin");
+            }
+            try {
+                console.log(JSON.stringify(callTool(name, args)));
+            }
+            catch (e) {
+                console.log(JSON.stringify({ content: [{ type: "text", text: `Backburner error: ${e.message}` }], isError: true }));
+            }
             return;
         }
         case "mcp": {

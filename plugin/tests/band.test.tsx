@@ -116,3 +116,44 @@ test('the band explains missing setup', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /Backburner:/ }))?.text).toMatch(/backburner init/)
   await ui.unmount()
 })
+
+test('Claude gets the CLI tools and its calls reach `backburner call`', async ($, on) => {
+  const registered: string[] = []
+  const calls: { argv: string[]; stdin?: string }[] = []
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/allen' : undefined }))
+  on('fs.read', () => ({ value: JSON.stringify({ integration: { node: '/usr/bin/node', cli: '/bb/cli.js' } }) }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('process.run', (_, e) => {
+    calls.push({ argv: [...e.argv], stdin: e.init?.stdin })
+    const verb = e.argv[2]
+    const stdout =
+      verb === 'tools'
+        ? JSON.stringify({
+            instructions: '',
+            tools: [{ name: 'add_task', description: 'Queue a task', inputSchema: { type: 'object', properties: { prompt: { type: 'string' }, priority: { type: 'integer' } } } }],
+          })
+        : verb === 'call'
+          ? JSON.stringify({ content: [{ type: 'text', text: 'Queued abc123' }] })
+          : verb === 'ingest'
+            ? JSON.stringify(summary())
+            : 'ok'
+    return { value: { exitCode: 0, stdout, stderr: '' } }
+  })
+  on('tool.register', (_, e) => {
+    registered.push(e.name)
+    return { value: undefined }
+  })
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('clock.every', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect(registered).toEqual(['add_task'])
+
+  const r = await $.tool.call({ tool: 'mcp__backburner__add_task', prompt: 'Compare note apps', priority: 4 } as never)
+  expect(r.deny).toBeUndefined()
+  expect(r.result).toBe('Queued abc123')
+  const call = calls.find(c => c.argv[2] === 'call')
+  expect(call?.argv).toEqual(['/usr/bin/node', '/bb/cli.js', 'call', 'add_task'])
+  expect(JSON.parse(call?.stdin ?? '{}')).toEqual({ prompt: 'Compare note apps', priority: 4 })
+})

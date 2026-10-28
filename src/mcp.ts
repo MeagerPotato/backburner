@@ -66,7 +66,7 @@ const CHAT_SETTINGS = [
 const SIZE_HELP =
   "small: a quick lookup or one-file tweak (~10 min). medium: a researched summary or a focused change (~30 min). large: deep research or a multi-file feature (~90 min).";
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: "add_task",
     description:
