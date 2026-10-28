@@ -32,6 +32,14 @@ backburner schedule install
 
 `init` writes `~/.backburner/config.json` and points Claude Code's status line at Backburner, which is how it reads your usage. If you already had a status line command (a usage meter mod, for example), it keeps running and its output still shows first. Your old settings file is backed up next to the original.
 
+Then add the Claude Code mod, which puts the Active / Away / Auto toggle above the prompt in Claude Desktop's Code tab and the terminal. In a terminal session, type:
+
+```
+/plugin install backburner --marketplace MeagerPotato/backburner
+```
+
+In the Desktop app, where `/plugin` doesn't run: click + next to the prompt box, then Plugins, Add marketplace with `MeagerPotato/backburner`, then Add plugin. The mod calls the CLI, so `backburner init` has to have run first.
+
 `schedule install` registers a background check every 10 minutes: Windows Task Scheduler, a launchd agent on macOS, or a systemd user timer on Linux. Background runs need your computer on and signed in.
 
 ## Use
@@ -47,6 +55,23 @@ backburner away          # or: active, auto
 Research tasks can search the web and read files, and their reports land in `~/.backburner/results/`. Coding tasks (`--code`) run in a fresh git worktree on a `backburner/...` branch. Backburner commits the changes, and if the repo has a GitHub remote and you have the `gh` CLI, it pushes the branch and opens a draft PR. Your own checkout is never touched.
 
 Tasks run in order of deadline, then priority (1 to 5), then age. A task only starts if its estimate fits the budget. Estimates start from the size you pick (small ~1%, medium ~3%, large ~8% of a week) and switch to the median of your own finished runs once there are three of a size.
+
+### In Claude Code
+
+With the mod installed, a band above the prompt shows your weekly %, what the queue can spend, how many tasks are waiting, and the three presence buttons. It also adds these commands:
+
+| Command | What it does |
+| --- | --- |
+| `/queue <prompt>` | Queue a research task |
+| `/queue-code <prompt>` | Queue a coding task in the current repo |
+| `/away`, `/active`, `/auto` | Set your presence |
+| `/backburner` | Open a pane with the budget breakdown and the queue, with Cancel buttons |
+
+The mod also feeds Backburner the usage numbers each session sees, which matters in the Desktop app, where the status line doesn't run.
+
+### Pace guard
+
+If your own use today runs past today's reserve and starts eating into later days', the mod tells you once a day. Choose what it does with `backburner config set guard warn|block|off`: `warn` (the default) shows a toast, `block` holds back the first prompt that day until you send it again, and `off` stays quiet.
 
 ### Presence
 
@@ -65,6 +90,7 @@ backburner config set sweepHours 12
 backburner config set presence.idleMinutes 30
 backburner config set fiveHour.maxWhileActive 50
 backburner config set timezone America/Los_Angeles
+backburner config set guard warn
 backburner config set run.model sonnet
 ```
 
@@ -82,13 +108,12 @@ Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) and
 
 ```
 backburner uninstall     # restores your status line, removes the hook and the schedule
+/plugin uninstall backburner
 npm uninstall -g backburner-cc
 ```
 
 ## Roadmap
 
-- An Active / Away / Auto toggle drawn in Claude Desktop's Code tab, plus `/queue` and `/away` commands (a Claude Code mod)
-- An optional pace guard that warns when a session is eating into future days' reserves
 - Adding tasks from regular Claude chat through a local MCP server
 - Task sizing by Haiku when you add a task
 

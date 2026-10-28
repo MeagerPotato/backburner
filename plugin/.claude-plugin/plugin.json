@@ -1,0 +1,10 @@
+{
+  "name": "backburner",
+  "version": "0.1.0",
+  "description": "Active, Away and Auto toggle above the prompt, /queue commands, and a pace guard for the Backburner usage pacer",
+  "author": {
+    "name": "Allen Hsieh"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

@@ -10,6 +10,8 @@ import { readStdin, statusline } from "./statusline.js";
 import { readFileSync } from "node:fs";
 import { compareTasks, estimate, findTask, loadRuns, loadTasks, newId, saveTasks, titleFrom, type Task } from "./tasks.js";
 import { currentState, decide, tick } from "./tick.js";
+import { summary } from "./summary.js";
+import { parseStatusline, recordSnapshot } from "./usage.js";
 import { WEEKDAYS } from "./time.js";
 
 const HELP = `backburner: pace your Claude plan's weekly usage and spend the slack on queued tasks
@@ -32,7 +34,7 @@ Every day
 Settings
   backburner config               Print the config file
   backburner config set <key> <value>
-      e.g. reserves.sat 2, weeklyCap 95, releaseHour 23, timezone America/Los_Angeles
+      e.g. reserves.sat 2, weeklyCap 95, releaseHour 23, guard warn, timezone America/Los_Angeles
 
 Advanced
   backburner tick [--dry-run]     One scheduler pass (what the background job runs)
@@ -54,7 +56,7 @@ function printStatus(json: boolean): void {
   const runs = loadRuns();
   const d = decide(s, tasks, runs);
   if (json) {
-    console.log(JSON.stringify({ weekly: s.weekly, fiveHour: s.fiveHour, budget: s.budget, presence: s.presence, decision: { run: d.run, task: d.task?.id, why: d.why } }, null, 2));
+    console.log(JSON.stringify(summary(), null, 2));
     return;
   }
   const tz = s.config.timezone;
@@ -79,12 +81,16 @@ function printStatus(json: boolean): void {
   console.log(`Next step       ${d.run ? `run ${d.task!.id} "${d.task!.title}"` : `wait (${d.why})`}`);
 }
 
-function printList(all: boolean): void {
+function printList(all: boolean, json: boolean): void {
   const config = loadConfig();
   const runs = loadRuns();
   const tasks = loadTasks()
     .filter((t) => all || t.status === "queued" || t.status === "running")
     .sort(compareTasks);
+  if (json) {
+    const rows = tasks.map((t) => ({ ...t, estimate: estimate(t.size, runs, config) }));
+    return console.log(JSON.stringify(rows));
+  }
   if (tasks.length === 0) return console.log(all ? "No tasks yet." : "Queue is empty. Add one with: backburner add \"...\"");
   for (const t of tasks) {
     const e = estimate(t.size, runs, config);
@@ -181,7 +187,7 @@ async function main(argv: string[]): Promise<void> {
     }
 
     case "list": {
-      printList(rest.includes("--all"));
+      printList(rest.includes("--all"), rest.includes("--json"));
       return;
     }
 
@@ -226,6 +232,19 @@ async function main(argv: string[]): Promise<void> {
       const snap = await probeUsage(loadConfig());
       if (!snap) fail("Couldn't read usage. Is Claude Code installed and signed in with a Pro or Max plan?");
       console.log(`Weekly ${snap.weekly?.pct.toFixed(1) ?? "?"}%, 5-hour ${snap.fiveHour?.pct.toFixed(1) ?? "?"}%`);
+      return;
+    }
+
+    case "ingest": {
+      // Called by the Claude Code mod: usage in the status line's JSON shape on stdin, summary out.
+      const raw = await readStdin();
+      try {
+        const snap = parseStatusline(JSON.parse(raw));
+        if (snap) recordSnapshot(snap);
+      } catch {
+        // No reading this time; still answer with the summary.
+      }
+      console.log(JSON.stringify(summary(Date.now(), { idle: false })));
       return;
     }
 
