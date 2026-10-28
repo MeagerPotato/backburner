@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Paces your Claude plan's weekly usage: daily reserves, a weekly cap, and a task queue that runs when you have usage to spare.",
   "license": "MIT",
+  "author": "Allen Hsieh",
+  "homepage": "https://github.com/MeagerPotato/backburner#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MeagerPotato/backburner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MeagerPotato/backburner/issues"
+  },
   "type": "module",
   "bin": {
     "backburner": "dist/cli.js"
@@ -21,11 +30,14 @@
     "prepare": "npm run build"
   },
   "keywords": [
+    "claude",
     "claude-code",
+    "anthropic",
     "usage",
     "rate-limits",
     "queue",
-    "scheduler"
+    "scheduler",
+    "mcp"
   ],
   "devDependencies": {
     "@types/node": "^22.10.0",
