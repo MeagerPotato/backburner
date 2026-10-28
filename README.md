@@ -50,7 +50,7 @@ Everything stays on your machine. There is no server and no account to create.
 ## Requirements
 
 - [Node.js](https://nodejs.org) 20 or newer
-- [Git](https://git-scm.com) (npm uses it to install from GitHub, and coding tasks use worktrees)
+- [Git](https://git-scm.com), for coding tasks (they run in git worktrees)
 - [Claude Code](https://code.claude.com) installed and signed in with a Pro or Max plan
 - Optional: the [GitHub CLI](https://cli.github.com) (`gh`), signed in, if you want coding tasks to open draft pull requests
 
@@ -59,7 +59,7 @@ Works on Windows, macOS and Linux.
 ## Install
 
 ```
-npm install -g github:MeagerPotato/backburner
+npm install -g https://github.com/MeagerPotato/backburner/archive/refs/heads/main.tar.gz
 backburner setup
 ```
 
@@ -78,6 +78,8 @@ Then add the mod. In a Claude Code terminal session, type:
 ```
 
 In the Claude Desktop app, where `/plugin` doesn't run: click **+** next to the prompt box, then **Plugins**, **Add marketplace**, enter `MeagerPotato/backburner`, then **Add plugin**.
+
+To update later, run the same `npm install -g` command again. Your settings and queue are kept.
 
 <details>
 <summary>Install step by step instead of with the wizard</summary>
@@ -312,7 +314,7 @@ The mod lives in `plugin/`. Check it with `claude plugin validate plugin` and `c
 
 Set `BACKBURNER_HOME` to a scratch folder while testing so you don't touch your real queue.
 
-The compiled `dist/` folder is committed so that `npm install -g github:MeagerPotato/backburner` works without a build step. CI fails if it's out of date, so run `npm run build` before you commit.
+The compiled `dist/` folder is committed so that installing from the GitHub archive works without a build step. CI fails if it's out of date, so run `npm run build` before you commit.
 
 Issues and pull requests are welcome.
 
