@@ -89,6 +89,27 @@ async function setMode($: $, mode: Mode): Promise<string> {
   return out
 }
 
+// Backburner's own tools (add_task, update_task, get_status...), registered from the
+// CLI's list so the CLI stays the one place they're defined. The model sees them as
+// mcp__backburner__<name>; each call goes to `backburner call <name>`.
+type ToolDef = { name: string; description: string; inputSchema: { properties?: Record<string, unknown> } & Record<string, unknown> }
+const toolArgs = new Map<string, string[]>()
+
+async function registerTools($: $): Promise<void> {
+  const { ok, out } = await cli($, ['tools'])
+  if (!ok) return
+  let tools: ToolDef[]
+  try {
+    tools = (JSON.parse(out) as { tools: ToolDef[] }).tools
+  } catch {
+    return
+  }
+  for (const t of tools) {
+    await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema })
+    toolArgs.set(`mcp__${$.plugin.name}__${t.name}`, Object.keys(t.inputSchema.properties ?? {}))
+  }
+}
+
 /** Run work in the background; a failure there must never surface as an unhandled rejection. */
 function bg(work: Promise<unknown>): void {
   work.catch(() => undefined)
@@ -122,6 +143,7 @@ export const register: Register = on => {
     await $.command.register({ name: 'active', description: 'Tell Backburner you are here, so the queue holds back' })
     await $.command.register({ name: 'auto', description: 'Let Backburner decide from your idle time' })
     await $.command.register({ name: 'backburner', description: 'Show the Backburner budget and queue' })
+    await registerTools($).catch(() => undefined)
     bg(refresh($))
     $.clock.every(60_000, () => bg(refresh($)))
     return started
@@ -149,6 +171,27 @@ export const register: Register = on => {
     }
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  on('tool.call', async ($, e, next) => {
+    const keys = toolArgs.get(e.tool)
+    if (!keys) return next(e)
+    const input = e as unknown as Record<string, unknown>
+    const args: Record<string, unknown> = {}
+    for (const k of keys) if (input[k] !== undefined) args[k] = input[k]
+    const name = e.tool.slice(`mcp__${$.plugin.name}__`.length)
+    const { ok, out } = await cli($, ['call', name], JSON.stringify(args))
+    let answer = out
+    let isError = !ok
+    try {
+      const r = JSON.parse(out) as { content?: { text?: string }[]; isError?: boolean }
+      answer = (r.content ?? []).map(c => c.text ?? '').join('\n')
+      isError = isError || r.isError === true
+    } catch {
+      // Not JSON: pass the CLI's own words through.
+    }
+    bg(refresh($))
+    return { result: isError ? `Error: ${answer}` : answer }
+  }).catch(($, e, next) => (toolArgs.has(e.tool) ? { deny: 'Backburner could not run that tool.' } : next(e)))
 
   on('command.run', { command: ['queue', 'queue-code'] }, async ($, e) => {
     const text = e.args.trim()

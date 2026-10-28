@@ -1,6 +1,6 @@
 {
   "name": "backburner-cc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Paces your Claude plan's weekly usage: daily reserves, a weekly cap, and a task queue that runs when you have usage to spare.",
   "license": "MIT",
   "author": "Allen Hsieh",

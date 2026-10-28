@@ -26,7 +26,7 @@ It solves three problems:
 - [How the budget works](#how-the-budget-works)
 - [Queueing tasks](#queueing-tasks)
 - [The Claude Code mod](#the-claude-code-mod)
-- [Queueing from regular Claude chat](#queueing-from-regular-claude-chat)
+- [Letting Claude manage it](#letting-claude-manage-it)
 - [Presence](#presence)
 - [Pace guard](#pace-guard)
 - [Command reference](#command-reference)
@@ -45,7 +45,7 @@ Backburner is a small command line program that runs on your own computer, next 
 | --- | --- | --- |
 | **CLI and background job** | Tracks your weekly usage, holds the queue, and every 10 minutes decides whether to run the next task with `claude -p`. | `npm install -g` and `backburner setup` |
 | **Claude Code mod** (optional) | Adds an Active / Away / Auto toggle and a budget line above the prompt in Claude Code (terminal and the Desktop app's Code tab), plus `/queue` commands. | `claude plugin install` |
-| **Chat connector** (optional) | An MCP server that lets regular Claude Desktop chats add, list and cancel tasks. | `backburner desktop install` |
+| **Chat connector** (optional) | An MCP server that lets regular Claude Desktop chats run Backburner for you: queue, edit, retry and cancel tasks, read results, set presence and change settings. | `backburner desktop install` |
 
 Everything stays on your machine. There is no server and no account to create.
 
@@ -63,11 +63,11 @@ Everything stays on your machine. There is no server and no account to create.
 | | |
 | --- | --- |
 | Package name | `backburner-cc` (installs the `backburner` command) |
-| Version | 0.1.0 |
+| Version | 0.2.0 |
 | Where to get it | This GitHub repo. It isn't published to the npm registry, so install from the archive URL below. |
 | Runtime | Node.js 20 or newer, with no runtime dependencies |
 | Platforms | Windows 10/11, macOS, Linux |
-| Claude Code mod | Plugin `backburner` in the marketplace `MeagerPotato/backburner` (the `plugin/` folder) |
+| Claude Code mod | Plugin `backburner` in the marketplace `MeagerPotato/backburner` (the `plugin/` folder): the prompt band, slash commands, Backburner's tools and the `manage-queue` skill |
 | Chat connector | A stdio MCP server built into the CLI (`backburner mcp`), added to Claude Desktop by `backburner desktop install` |
 | License | MIT |
 
@@ -202,17 +202,34 @@ Click a button to change your presence. The mod also adds these commands:
 
 In the Desktop app, where the status line doesn't run, the mod is also what feeds Backburner your latest usage numbers. It needs `backburner init` (or `setup`) to have run first, since it calls the CLI.
 
-## Queueing from regular Claude chat
+## Letting Claude manage it
+
+You don't have to run Backburner's commands yourself. Once it's connected, ask Claude in plain words and it handles the queue, presence and settings for you.
+
+**Regular Claude Desktop chats** use the chat connector:
 
 ```
 backburner desktop install
 ```
 
-This adds Backburner as an MCP server in Claude Desktop (your old config is backed up first). Quit and reopen the app. Then, in any chat:
+This adds Backburner as an MCP server in Claude Desktop (your old config is backed up first). Quit and reopen the app. The connector tells Claude what Backburner is and how to use it when the chat starts, so you don't need to explain anything.
 
-> Queue a research task for Backburner: compare the three cheapest flights from SFO to Taipei in late December.
+**Claude Code** (terminal, and the Desktop app's Code tab) gets the same tools from the mod, plus the `manage-queue` skill that tells Claude when and how to use them. Claude reads it when your request is about Backburner and manages the queue for you, with no shell commands to approve.
 
-Claude writes a prompt that stands on its own, picks a size, and adds it. You can also ask it to list tasks, cancel one, or show your budget. Coding tasks from chat need the repo's full path.
+Things you can say in either place:
+
+| You say | Claude does |
+| --- | --- |
+| "Put this on the backburner: compare the three cheapest flights from SFO to Taipei in late December." | Writes a prompt that stands on its own, picks a size, and queues it |
+| "Queue a fix for the flaky signup test in this repo, due Friday." | Queues a coding task in the repo with a deadline |
+| "Make the flights one high priority." / "Change it to small." | Edits the queued task |
+| "What's in the queue?" / "Why hasn't anything run?" | Lists tasks, or shows the budget and the reason the next task is waiting |
+| "What did the flights task find?" | Reads the finished report and summarizes it |
+| "That one failed, try it again." | Puts it back in the queue |
+| "I'm heading to bed." / "I'm back." | Sets presence to away or active |
+| "Hold back only 2% on weekends." / "Raise the cap to 97%." | Changes `reserves.sat`, `reserves.sun` or `weeklyCap` |
+
+The chat connector's tools are `add_task`, `list_tasks`, `update_task`, `retry_task`, `cancel_task`, `get_result`, `get_budget`, `set_presence`, `get_settings` and `change_setting`. For safety, chat can't change the tools a queued run may use (`run.researchTools`, `run.codeTools`) or the path to the `claude` CLI; change those in a terminal. Coding tasks from chat need the repo's full path.
 
 ## Presence
 
@@ -246,7 +263,10 @@ backburner config set guard off     # stay quiet
 | `backburner status [--json]` | Budget, reserves, presence and queue |
 | `backburner add "<prompt>" [options]` | Queue a task (see [Queueing tasks](#queueing-tasks)) |
 | `backburner list [--all] [--json]` | Queued tasks, or all tasks with results |
+| `backburner edit <id> [options]` | Change a queued task: `--prompt`, `--title`, `--priority`, `--deadline` (`""` clears it), `--size`, `--code --dir <path>` or `--research` |
 | `backburner remove <id>` | Cancel a task (`cancel` works too) |
+| `backburner retry <id>` | Queue a failed, cancelled or finished task again |
+| `backburner result <id>` | Print a finished task's report, or its branch and PR |
 | `backburner away` / `active` / `auto` | Set presence |
 | `backburner config` | Print the config |
 | `backburner config set <key> <value>` | Change a setting |
@@ -299,6 +319,8 @@ Everything is in `~/.backburner/` (`%USERPROFILE%\.backburner\` on Windows). Set
 **Nothing runs.** Run `backburner tick --dry-run` to see why. Common reasons: the queue is empty, the next task's estimate doesn't fit the budget, you're marked active and the 5-hour window is over 50%, or the computer was asleep. Background runs need the computer on and you signed in.
 
 **`backburner` isn't found.** npm's global folder isn't on your PATH. Run `npm prefix -g` and add that folder (on macOS and Linux, its `bin` subfolder) to PATH.
+
+**The mod won't install or load, or `claude plugin validate` says `"session.start" is not an event`.** Your Claude Code is too old for the mod (2.1.248 was; 2.1.309 works). Run `claude update`, or update the Desktop app.
 
 **The mod says Backburner isn't set up.** Run `backburner init` in a terminal, then start a new Claude Code session.
 
