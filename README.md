@@ -18,6 +18,8 @@ It solves three problems:
 ## Contents
 
 - [What it is](#what-it-is)
+- [How it works](#how-it-works)
+- [Package details](#package-details)
 - [Requirements](#requirements)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -42,10 +44,32 @@ Backburner is a small command line program that runs on your own computer, next 
 | Part | What it does | Installed by |
 | --- | --- | --- |
 | **CLI and background job** | Tracks your weekly usage, holds the queue, and every 10 minutes decides whether to run the next task with `claude -p`. | `npm install -g` and `backburner setup` |
-| **Claude Code mod** (optional) | Adds an Active / Away / Auto toggle and a budget line above the prompt in Claude Code (terminal and the Desktop app's Code tab), plus `/queue` commands. | `/plugin install` |
+| **Claude Code mod** (optional) | Adds an Active / Away / Auto toggle and a budget line above the prompt in Claude Code (terminal and the Desktop app's Code tab), plus `/queue` commands. | `claude plugin install` |
 | **Chat connector** (optional) | An MCP server that lets regular Claude Desktop chats add, list and cancel tasks. | `backburner desktop install` |
 
 Everything stays on your machine. There is no server and no account to create.
+
+## How it works
+
+1. **Reading usage.** Claude Code passes your plan's weekly and 5-hour usage to its status line command. `backburner init` makes Backburner that command (your old one still runs and shows first), so every Claude Code session hands it fresh numbers. `backburner probe` gets a reading on demand by starting a tiny Haiku request and stopping it before the model answers.
+2. **Working out a budget.** Backburner subtracts your weekly cap, today's reserve and every later day's reserve from what's left of the week. Whatever remains is what the queue may spend. See [How the budget works](#how-the-budget-works).
+3. **Knowing whether you're around.** A prompt hook records each Claude Code prompt you send, and in `auto` mode Backburner also checks keyboard and mouse idle time. When you're active it holds back so it doesn't eat into your 5-hour window.
+4. **Running a task.** Every 10 minutes the background job runs `backburner tick`. If the next task's estimate fits the budget, it starts the regular `claude` CLI headless (`claude -p --output-format stream-json --permission-mode dontAsk`) with only the tools that kind of task may use, and sends the prompt on stdin.
+5. **Saving the result.** The final answer goes to `~/.backburner/results/<task id>/<run id>.md`, with the full run transcript next to it as `.jsonl`. Coding tasks commit to a new branch in a git worktree and can open a draft PR.
+6. **Learning.** Backburner reads the weekly % before and after each run, records what the task actually cost, and uses your own medians for future estimates.
+
+## Package details
+
+| | |
+| --- | --- |
+| Package name | `backburner-cc` (installs the `backburner` command) |
+| Version | 0.1.0 |
+| Where to get it | This GitHub repo. It isn't published to the npm registry, so install from the archive URL below. |
+| Runtime | Node.js 20 or newer, with no runtime dependencies |
+| Platforms | Windows 10/11, macOS, Linux |
+| Claude Code mod | Plugin `backburner` in the marketplace `MeagerPotato/backburner` (the `plugin/` folder) |
+| Chat connector | A stdio MCP server built into the CLI (`backburner mcp`), added to Claude Desktop by `backburner desktop install` |
+| License | MIT |
 
 ## Requirements
 
@@ -71,11 +95,14 @@ backburner setup
 4. Registers the background job: Windows Task Scheduler, a launchd agent on macOS, or a systemd user timer on Linux.
 5. Optionally adds the chat connector to Claude Desktop.
 
-Then add the mod. In a Claude Code terminal session, type:
+Then add the mod. From any terminal:
 
 ```
-/plugin install backburner --marketplace MeagerPotato/backburner
+claude plugin marketplace add MeagerPotato/backburner
+claude plugin install backburner@backburner
 ```
+
+Inside a Claude Code terminal session, `/plugin marketplace add MeagerPotato/backburner` and then `/plugin install backburner@backburner` do the same. Start a new session afterwards so the mod loads.
 
 In the Claude Desktop app, where `/plugin` doesn't run: click **+** next to the prompt box, then **Plugins**, **Add marketplace**, enter `MeagerPotato/backburner`, then **Add plugin**.
 
@@ -277,6 +304,10 @@ Everything is in `~/.backburner/` (`%USERPROFILE%\.backburner\` on Windows). Set
 
 **A coding task finished but there's no PR.** The repo needs an `origin` remote on GitHub and `gh auth status` must show you're signed in. The branch is still committed locally either way.
 
+**Reports look garbled in Windows PowerShell** (for example `â€”` where a dash should be). Reports are UTF-8, and Windows PowerShell 5.1 reads files as ANSI by default. Use `Get-Content <file> -Encoding UTF8`, PowerShell 7, or open the `.md` file in an editor.
+
+**`DeprecationWarning: [DEP0190]` on Windows.** Node 24 prints this when Backburner starts `claude` through `cmd.exe`, which Windows needs for npm's `.cmd` shims. It's harmless; the prompt goes in on stdin, never on the command line.
+
 **Check the background job.** Windows: `schtasks /Query /TN Backburner`. macOS: `launchctl list | grep backburner`. Linux: `systemctl --user status backburner.timer`.
 
 ## Terms of service
@@ -296,7 +327,7 @@ backburner uninstall           # restores your status line, removes the hook, th
 npm uninstall -g backburner-cc
 ```
 
-Then, in Claude Code, `/plugin uninstall backburner`. Delete `~/.backburner/` to remove your queue and history.
+Then remove the mod with `claude plugin uninstall backburner@backburner` (or `/plugin uninstall backburner` inside Claude Code). Delete `~/.backburner/` to remove your queue and history.
 
 ## Development
 
