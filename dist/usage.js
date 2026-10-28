@@ -1,15 +1,23 @@
+import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { paths } from "./paths.js";
 import { readJson, writeJson } from "./store.js";
 import { DAY, HOUR, startOfLocalDay } from "./time.js";
+export const PROVIDERS = ["claude", "codex"];
+export const PROVIDER_NAMES = { claude: "Claude", codex: "Codex" };
+export const providerOf = (s) => s.provider ?? "claude";
 const KEEP_MS = 14 * DAY;
-export function loadSnapshots() {
-    return readJson(paths.usage(), []);
+/** Saved readings, oldest first; only one provider's when `provider` is given. */
+export function loadSnapshots(provider) {
+    const all = readJson(paths.usage(), []);
+    return provider ? all.filter((s) => providerOf(s) === provider) : all;
 }
 export function recordSnapshot(s) {
     if (!s.weekly && !s.fiveHour)
         return;
     const all = loadSnapshots().filter((x) => x.at > s.at - KEEP_MS);
-    const last = all.at(-1);
+    const last = all.filter((x) => providerOf(x) === providerOf(s)).at(-1);
     // Status lines redraw constantly. Skip readings that add nothing new.
     if (last &&
         s.at - last.at < 5 * 60_000 &&
@@ -123,4 +131,110 @@ export function parseStreamEvent(event, at = Date.now()) {
 export function isRejection(event) {
     const e = event;
     return e?.type === "rate_limit_event" && e.rate_limit_info?.status === "rejected";
+}
+// ---------- Codex ----------
+/** Codex keeps its own logs under CODEX_HOME (default ~/.codex). */
+export function codexHome() {
+    return process.env.CODEX_HOME || join(homedir(), ".codex");
+}
+function codexWindow(w, recordAt) {
+    if (!w || typeof w !== "object")
+        return undefined;
+    const o = w;
+    if (typeof o.used_percent !== "number")
+        return undefined;
+    const resetsAt = toMs(o.resets_at) ?? (typeof o.resets_in_seconds === "number" ? recordAt + o.resets_in_seconds * 1000 : undefined);
+    if (resetsAt === undefined)
+        return undefined;
+    return { win: { pct: o.used_percent, resetsAt }, minutes: typeof o.window_minutes === "number" ? o.window_minutes : undefined };
+}
+/**
+ * Reads one line of a Codex session log. Codex writes a `token_count` event with
+ * `rate_limits` after each model call: `primary` is the 5-hour window and
+ * `secondary` the weekly one (told apart by `window_minutes` when present).
+ */
+export function parseCodexRecord(record) {
+    const r = record;
+    // Session logs wrap the event as {type: "event_msg", payload}; older builds wrote it bare.
+    const p = r?.type === "event_msg" ? r.payload : r;
+    const limits = p?.type === "token_count" ? p.rate_limits : undefined;
+    if (!limits)
+        return undefined;
+    const parsed = r?.timestamp ? Date.parse(r.timestamp) : NaN;
+    const snap = { at: Number.isFinite(parsed) ? parsed : Date.now(), source: "codex", provider: "codex" };
+    for (const key of ["primary", "secondary"]) {
+        const w = codexWindow(limits[key], snap.at);
+        if (!w)
+            continue;
+        const weekly = w.minutes !== undefined ? w.minutes > 24 * 60 : key === "secondary";
+        if (weekly)
+            snap.weekly = w.win;
+        else
+            snap.fiveHour = w.win;
+    }
+    return snap.weekly || snap.fiveHour ? snap : undefined;
+}
+/** Newest Codex usage reading in its session logs from the last few days, if any. */
+export function readCodexUsage(now = Date.now(), home = codexHome()) {
+    const root = join(home, "sessions");
+    const files = [];
+    for (let d = 0; d < 8; d++) {
+        const day = new Date(now - d * DAY);
+        const dir = join(root, String(day.getFullYear()), String(day.getMonth() + 1).padStart(2, "0"), String(day.getDate()).padStart(2, "0"));
+        let names = [];
+        try {
+            names = readdirSync(dir);
+        }
+        catch {
+            continue;
+        }
+        for (const n of names) {
+            if (!n.endsWith(".jsonl"))
+                continue;
+            try {
+                files.push({ path: join(dir, n), mtime: statSync(join(dir, n)).mtimeMs });
+            }
+            catch {
+                // Gone already.
+            }
+        }
+    }
+    files.sort((a, b) => b.mtime - a.mtime);
+    for (const f of files.slice(0, 5)) {
+        const snap = lastCodexReading(f.path);
+        if (snap)
+            return snap;
+    }
+    return undefined;
+}
+/** Scans a session log from the end (only its last 512 KB) for the newest usage reading. */
+function lastCodexReading(file) {
+    let text;
+    try {
+        const size = statSync(file).size;
+        const len = Math.min(size, 512 * 1024);
+        const fd = openSync(file, "r");
+        const buf = Buffer.alloc(len);
+        readSync(fd, buf, 0, len, size - len);
+        closeSync(fd);
+        text = buf.toString("utf8");
+    }
+    catch {
+        return undefined;
+    }
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line.includes("rate_limits"))
+            continue;
+        try {
+            const snap = parseCodexRecord(JSON.parse(line));
+            if (snap)
+                return snap;
+        }
+        catch {
+            // A line cut by the 512 KB window.
+        }
+    }
+    return undefined;
 }

@@ -5,11 +5,13 @@ import { paths } from "./paths.js";
 import { loadPresence, osIdleMs, resolvePresence, type Presence } from "./presence.js";
 import { probeUsage, runTask } from "./runner.js";
 import { log } from "./store.js";
-import { estimate, loadRuns, loadTasks, newId, pickNext, queueSpentSince, saveRuns, saveTasks, type Run, type Task } from "./tasks.js";
+import { compareTasks, estimate, loadRuns, loadTasks, newId, pickNext, queueSpentSince, runsOn, saveRuns, saveTasks, type Run, type Task } from "./tasks.js";
 import { startOfLocalDay } from "./time.js";
-import { latest, loadSnapshots, weeklyAtDayStart, type Window } from "./usage.js";
+import { latest, loadSnapshots, PROVIDER_NAMES, readCodexUsage, recordSnapshot, weeklyAtDayStart, type Provider, type Window } from "./usage.js";
 
 export interface State {
+  /** Whose plan these numbers are for. */
+  provider: Provider;
   config: Config;
   weekly?: Window & { at: number };
   fiveHour?: Window & { at: number };
@@ -17,16 +19,22 @@ export interface State {
   presence: Presence;
 }
 
-/** Everything `status` and `tick` need, computed from what's on disk. */
-export function currentState(now = Date.now(), opts: { idle?: boolean } = {}): State {
+/** Everything `status` and `tick` need for one plan, computed from what's on disk. */
+export function currentState(now = Date.now(), opts: { idle?: boolean; provider?: Provider } = {}): State {
+  const provider = opts.provider ?? "claude";
   const config = loadConfig();
-  const snaps = loadSnapshots();
+  if (provider === "codex") {
+    // Codex writes its usage into its own session logs; pick up the newest one.
+    const reading = readCodexUsage(now);
+    if (reading) recordSnapshot(reading);
+  }
+  const snaps = loadSnapshots(provider);
   let { weekly, fiveHour } = latest(snaps);
   // Claude Code drops a window once its reset passes; do the same.
   if (weekly && weekly.resetsAt <= now) weekly = undefined;
   if (fiveHour && fiveHour.resetsAt <= now) fiveHour = undefined;
   const presence = resolvePresence(loadPresence(), config.presence.idleMinutes, now, opts.idle === false ? undefined : osIdleMs());
-  if (!weekly) return { config, fiveHour, presence };
+  if (!weekly) return { provider, config, fiveHour, presence };
 
   const dayStart = startOfLocalDay(now, config.timezone);
   const budget = computeBudget({
@@ -35,9 +43,9 @@ export function currentState(now = Date.now(), opts: { idle?: boolean } = {}): S
     weeklyPct: weekly.pct,
     resetsAt: weekly.resetsAt,
     dayStartPct: weeklyAtDayStart(snaps, now, config.timezone, weekly),
-    queueSpentToday: queueSpentSince(loadRuns(), dayStart, weekly.resetsAt),
+    queueSpentToday: queueSpentSince(loadRuns(), dayStart, weekly.resetsAt, provider),
   });
-  return { config, weekly, fiveHour, budget, presence };
+  return { provider, config, weekly, fiveHour, budget, presence };
 }
 
 export interface Decision {
@@ -46,20 +54,25 @@ export interface Decision {
   why: string;
 }
 
-/** Should the queue start a task right now, and which one? */
+/** Should the queue start a task on this plan right now, and which one? */
 export function decide(state: State, tasks: Task[], runs: Run[]): Decision {
-  const { config, budget, fiveHour, presence } = state;
+  const { config, budget, fiveHour, presence, provider } = state;
+  const queued = tasks.filter((t) => t.status === "queued" && runsOn(t, provider, config.engines));
+  if (queued.length === 0) return { run: false, why: "queue is empty" };
   if (!budget) return { run: false, why: "no weekly usage reading yet" };
   const fiveMax = presence.effective === "away" ? config.fiveHour.maxWhileAway : config.fiveHour.maxWhileActive;
   if (fiveHour && fiveHour.pct >= fiveMax) {
     return { run: false, why: `5-hour window at ${fiveHour.pct.toFixed(0)}%, limit while ${presence.effective} is ${fiveMax}%` };
   }
-  const queued = tasks.filter((t) => t.status === "queued");
-  if (queued.length === 0) return { run: false, why: "queue is empty" };
   if (budget.available <= 0) return { run: false, why: "no budget left after reserves and cap" };
-  const task = pickNext(tasks, budget.available, runs, config);
+  const task = pickNext(tasks, budget.available, runs, config, provider);
   if (!task) return { run: false, why: `${budget.available}% available, smaller than every queued task's estimate` };
   return { run: true, task, why: `${budget.available}% available, you're ${presence.effective}` };
+}
+
+/** Plans the queue may spend, as configured (Claude if the list is empty or broken). */
+export function enginesOf(config: Config): Provider[] {
+  return config.engines?.length ? config.engines : ["claude"];
 }
 
 // ---------- locking ----------
@@ -110,31 +123,41 @@ export async function tick(opts: { dryRun?: boolean; maxTasks?: number } = {}): 
   }
   try {
     const maxTasks = opts.maxTasks ?? 10;
+    const engines = enginesOf(config);
+    const multi = engines.length > 1;
     for (let n = 0; n < maxTasks; n++) {
-      let state = currentState();
-      const stale = !state.weekly || Date.now() - state.weekly.at > config.run.staleMinutes * 60_000;
-      const anyQueued = loadTasks().some((t) => t.status === "queued");
-      if (stale && anyQueued && !opts.dryRun) {
-        say("usage reading is stale; probing");
-        const snap = await probeUsage(config);
-        if (!snap) say("probe returned no usage reading");
-        state = currentState();
+      // Ask each plan what it would run, then start the task that comes first in the queue.
+      const options: { state: State; d: Decision }[] = [];
+      const reasons: string[] = [];
+      for (const provider of engines) {
+        let state = currentState(Date.now(), { provider });
+        const stale = !state.weekly || Date.now() - state.weekly.at > config.run.staleMinutes * 60_000;
+        const anyQueued = loadTasks().some((t) => t.status === "queued" && runsOn(t, provider, engines));
+        if (stale && anyQueued && !opts.dryRun) {
+          say(`${PROVIDER_NAMES[provider]} usage reading is stale; probing`);
+          const snap = await probeUsage(config, provider);
+          if (!snap) say(`${PROVIDER_NAMES[provider]} probe returned no usage reading`);
+          state = currentState(Date.now(), { provider });
+        }
+        const d = decide(state, loadTasks(), loadRuns());
+        if (d.run && d.task) options.push({ state, d });
+        else reasons.push(multi ? `${PROVIDER_NAMES[provider]}: ${d.why}` : d.why);
       }
-
-      const tasks = loadTasks();
-      const runs = loadRuns();
-      const d = decide(state, tasks, runs);
-      if (!d.run || !d.task) {
-        say(`not running: ${d.why}`);
+      const pick = options.sort((a, b) => compareTasks(a.d.task!, b.d.task!))[0];
+      if (!pick) {
+        say(`not running: ${reasons.join("; ")}`);
         break;
       }
-      const est = estimate(d.task.size, runs, config);
-      say(`${opts.dryRun ? "would run" : "running"} ${d.task.id} "${d.task.title}" (est. ${est.pct}%, ~${est.minutes} min): ${d.why}`);
+      const { state, d } = pick;
+      const task = d.task!;
+      const est = estimate(task.size, loadRuns(), config, state.provider);
+      const on = multi ? ` on ${PROVIDER_NAMES[state.provider]}` : "";
+      say(`${opts.dryRun ? "would run" : "running"} ${task.id} "${task.title}"${on} (est. ${est.pct}%, ~${est.minutes} min): ${d.why}`);
       if (opts.dryRun) break;
 
-      const outcome = await runOne(d.task.id, state, config);
+      const outcome = await runOne(task.id, state, config);
       if (outcome === "limit") {
-        say("hit a usage limit; the task goes back in the queue");
+        say(`hit a ${PROVIDER_NAMES[state.provider]} usage limit; the task goes back in the queue`);
         break;
       }
     }
@@ -155,16 +178,17 @@ async function runOne(taskId: string, state: State, config: Config): Promise<Run
     id: newId(),
     taskId,
     size: task.size,
+    provider: state.provider,
     startedAt: Date.now(),
     weeklyBefore: state.weekly?.pct,
     weeklyResetsAt: state.weekly?.resetsAt,
   };
   saveRuns([...loadRuns(), run]);
 
-  const result = await runTask(task, run.id, config).catch((e: Error) => ({ outcome: "failed" as const, note: e.message, lastSnapshot: undefined, result: undefined }));
+  const result = await runTask(task, run.id, config, state.provider).catch((e: Error) => ({ outcome: "failed" as const, note: e.message, lastSnapshot: undefined, result: undefined }));
 
   // The weekly % after the run is the newest reading in the same window.
-  const after = currentState(Date.now(), { idle: false }).weekly;
+  const after = currentState(Date.now(), { idle: false, provider: state.provider }).weekly;
   run.endedAt = Date.now();
   run.outcome = result.outcome;
   if (after && run.weeklyResetsAt && Math.abs(after.resetsAt - run.weeklyResetsAt) < 3_600_000) run.weeklyAfter = after.pct;
