@@ -2,7 +2,17 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig, saveConfig, setConfigValue, validate, type Size } from "./config.js";
-import { initConfig, installSchedule, pinClaudePath, uninstallSchedule, unwireClaudeSettings, wireClaudeSettings } from "./install.js";
+import {
+  initConfig,
+  installDesktopMcp,
+  installSchedule,
+  pinClaudePath,
+  uninstallDesktopMcp,
+  uninstallSchedule,
+  unwireClaudeSettings,
+  wireClaudeSettings,
+} from "./install.js";
+import { serve } from "./mcp.js";
 import { paths } from "./paths.js";
 import { setMode, touchActivity } from "./presence.js";
 import { probeUsage } from "./runner.js";
@@ -20,6 +30,8 @@ Setup
   backburner init                 Create config, hook into Claude Code's status line
   backburner schedule install     Run the queue in the background every 10 minutes
   backburner schedule uninstall   Stop background runs
+  backburner desktop install      Let regular Claude Desktop chats queue tasks (MCP server)
+  backburner desktop uninstall    Remove it from Claude Desktop
   backburner uninstall            Undo init's changes to Claude Code settings
 
 Every day
@@ -130,6 +142,23 @@ async function main(argv: string[]): Promise<void> {
       const changed = unwireClaudeSettings(loadConfig());
       console.log(changed ? "Restored Claude Code settings." : "Nothing to undo in Claude Code settings.");
       console.log(uninstallSchedule());
+      if (uninstallDesktopMcp()) console.log("Removed Backburner from Claude Desktop's MCP servers.");
+      return;
+    }
+
+    case "desktop": {
+      if (rest[0] === "install") {
+        const { file, backup } = installDesktopMcp();
+        console.log(`Added Backburner to ${file}${backup ? ` (backup: ${backup})` : ""}.`);
+        console.log("Quit and reopen Claude Desktop, then ask Claude to queue something for Backburner.");
+      } else if (rest[0] === "uninstall") {
+        console.log(uninstallDesktopMcp() ? "Removed Backburner from Claude Desktop." : "Backburner wasn't in Claude Desktop's config.");
+      } else fail("Usage: backburner desktop install|uninstall");
+      return;
+    }
+
+    case "mcp": {
+      await serve();
       return;
     }
 
