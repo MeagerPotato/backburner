@@ -1,6 +1,7 @@
 import { paths } from "./paths.js";
 import { readJson, writeJson } from "./store.js";
 import { systemTimeZone, WEEKDAYS } from "./time.js";
+import { PROVIDERS } from "./usage.js";
 export const DEFAULT_CONFIG = {
     timezone: systemTimeZone(),
     reserves: { mon: 5, tue: 5, wed: 5, thu: 5, fri: 5, sat: 3, sun: 3 },
@@ -32,6 +33,8 @@ export const DEFAULT_CONFIG = {
         ],
         openDraftPr: true,
     },
+    engines: ["claude"],
+    codex: { path: "codex", search: true },
     guard: "warn",
     statusline: { showLine: true },
 };
@@ -69,6 +72,9 @@ export function validate(c) {
     }
     if (!["off", "warn", "block"].includes(c.guard))
         errors.push('guard must be "off", "warn" or "block"');
+    if (!Array.isArray(c.engines) || c.engines.length === 0 || c.engines.some((e) => !PROVIDERS.includes(e))) {
+        errors.push(`engines must list one or more of: ${PROVIDERS.join(", ")}`);
+    }
     const weekly = WEEKDAYS.reduce((s, d) => s + c.reserves[d], 0);
     if (weekly > c.weeklyCap)
         errors.push(`reserves add up to ${weekly}%, more than the ${c.weeklyCap}% cap, so the queue could never run`);
@@ -91,7 +97,7 @@ export function setConfigValue(c, key, raw) {
         node = node[p];
     }
     const leaf = parts.at(-1);
-    if (!(leaf in node) && !(parts[0] === "run" && leaf === "model") && !(parts[0] === "statusline" && leaf === "chain")) {
+    if (!(leaf in node) && !((parts[0] === "run" || parts[0] === "codex") && leaf === "model") && !(parts[0] === "statusline" && leaf === "chain")) {
         throw new Error(`Unknown config key: ${key}`);
     }
     const current = node[leaf];

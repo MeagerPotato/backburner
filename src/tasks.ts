@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Config, Size } from "./config.js";
 import { paths } from "./paths.js";
 import { readJson, writeJson } from "./store.js";
+import { providerOf, type Provider } from "./usage.js";
 
 export type Mode = "research" | "code";
 export type Status = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -18,6 +19,8 @@ export interface Task {
   /** ISO date or date-time. Tasks due before others go first. */
   deadline?: string;
   size: Size;
+  /** Which plan runs it. Unset: the first engine in the config with room. */
+  engine?: Provider;
   status: Status;
   createdAt: number;
   attempts: number;
@@ -30,6 +33,8 @@ export interface Run {
   id: string;
   taskId: string;
   size: Size;
+  /** Whose plan the run spent. Runs saved before Codex support have none: Claude. */
+  provider?: Provider;
   startedAt: number;
   endedAt?: number;
   /** Weekly % right before and right after the run. */
@@ -89,10 +94,13 @@ export interface Estimate {
   basis: "default" | "history";
 }
 
-/** Estimate from your own finished runs of the same size, or the configured defaults. */
-export function estimate(size: Size, runs: Run[], config: Pick<Config, "estimates">): Estimate {
+/**
+ * Estimate from your own finished runs of the same size on the same plan, or the
+ * configured defaults. Plans differ in size, so a Codex run says nothing about Claude.
+ */
+export function estimate(size: Size, runs: Run[], config: Pick<Config, "estimates">, provider: Provider = "claude"): Estimate {
   const done = runs.filter(
-    (r) => r.size === size && r.outcome === "done" && r.endedAt && r.weeklyBefore !== undefined && r.weeklyAfter !== undefined,
+    (r) => r.size === size && providerOf(r) === provider && r.outcome === "done" && r.endedAt && r.weeklyBefore !== undefined && r.weeklyAfter !== undefined,
   );
   const fallback = config.estimates[size];
   if (done.length < 3) return { ...fallback, basis: "default" };
@@ -101,19 +109,32 @@ export function estimate(size: Size, runs: Run[], config: Pick<Config, "estimate
   return { pct: Math.max(0.1, Math.round(pct * 10) / 10), minutes: Math.round(minutes), basis: "history" };
 }
 
-/** The next task to run: the first queued one, in order, whose estimate fits the budget. */
-export function pickNext(tasks: Task[], available: number, runs: Run[], config: Pick<Config, "estimates">): Task | undefined {
-  return tasks
-    .filter((t) => t.status === "queued")
-    .sort(compareTasks)
-    .find((t) => estimate(t.size, runs, config).pct <= available);
+/** True if a task may run on this plan: the plan is enabled, and the task isn't pinned to another. */
+export function runsOn(t: Pick<Task, "engine">, provider: Provider, engines: readonly Provider[]): boolean {
+  return engines.includes(provider) && (!t.engine || t.engine === provider);
 }
 
-/** Weekly % the queue spent since `since` within the given weekly window. */
-export function queueSpentSince(runs: Run[], since: number, weeklyResetsAt: number): number {
+/** The next task to run on a plan: the first queued one, in order, whose estimate fits the budget. */
+export function pickNext(
+  tasks: Task[],
+  available: number,
+  runs: Run[],
+  config: Pick<Config, "estimates"> & Partial<Pick<Config, "engines">>,
+  provider: Provider = "claude",
+): Task | undefined {
+  const engines = config.engines ?? ["claude"];
+  return tasks
+    .filter((t) => t.status === "queued" && runsOn(t, provider, engines))
+    .sort(compareTasks)
+    .find((t) => estimate(t.size, runs, config, provider).pct <= available);
+}
+
+/** Weekly % the queue spent on one plan since `since` within the given weekly window. */
+export function queueSpentSince(runs: Run[], since: number, weeklyResetsAt: number, provider: Provider = "claude"): number {
   return runs
     .filter(
       (r) =>
+        providerOf(r) === provider &&
         r.startedAt >= since &&
         r.weeklyBefore !== undefined &&
         r.weeklyAfter !== undefined &&

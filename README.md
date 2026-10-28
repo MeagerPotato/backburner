@@ -5,9 +5,9 @@
 ![Windows, macOS, Linux](https://img.shields.io/badge/os-windows%20%7C%20macos%20%7C%20linux-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Backburner paces your Claude plan's weekly usage so you use all of it without getting locked out early.
+Backburner paces your AI plan's weekly usage so you use all of it without getting locked out early. It works with Claude (through Claude Code) and ChatGPT (through Codex), on their own or both at once.
 
-You set aside a small daily reserve for your own chats, set a weekly cap, and queue up tasks. When there's usage to spare (overnight, while you're away, or in the last hours before your weekly reset), Backburner runs the queue for you with the official Claude Code CLI.
+You set aside a small daily reserve for your own chats, set a weekly cap, and queue up tasks. When there's usage to spare (overnight, while you're away, or in the last hours before your weekly reset), Backburner runs the queue for you with the official Claude Code or Codex CLI. You don't have to come back and type "continue": the queue keeps going on its own until the budget runs out, then picks up again when there's room.
 
 It solves three problems:
 
@@ -27,6 +27,7 @@ It solves three problems:
 - [Queueing tasks](#queueing-tasks)
 - [The Claude Code mod](#the-claude-code-mod)
 - [Letting Claude manage it](#letting-claude-manage-it)
+- [Codex and other AI tools](#codex-and-other-ai-tools)
 - [Presence](#presence)
 - [Pace guard](#pace-guard)
 - [Command reference](#command-reference)
@@ -39,63 +40,84 @@ It solves three problems:
 
 ## What it is
 
-Backburner is a small command line program that runs on your own computer, next to Claude Code. It isn't a Claude feature or an official add-on. It has three parts, and only the first is required:
+Backburner is a small command line program that runs on your own computer, next to Claude Code or Codex. It isn't an official feature or add-on of either. It has three parts, and only the first is required:
 
 | Part | What it does | Installed by |
 | --- | --- | --- |
-| **CLI and background job** | Tracks your weekly usage, holds the queue, and every 10 minutes decides whether to run the next task with `claude -p`. | `npm install -g` and `backburner setup` |
+| **CLI and background job** | Tracks your weekly usage, holds the queue, and every 10 minutes decides whether to run the next task with `claude -p` or `codex exec`. | The installer, or `npm install -g` and `backburner setup` |
 | **Claude Code mod** (optional) | Adds an Active / Away / Auto toggle and a budget line above the prompt in Claude Code (terminal and the Desktop app's Code tab), plus `/queue` commands. | `claude plugin install` |
-| **Chat connector** (optional) | An MCP server that lets regular Claude Desktop chats run Backburner for you: queue, edit, retry and cancel tasks, read results, set presence and change settings. | `backburner desktop install` |
+| **Agent connections** (optional) | An MCP server that lets your AI tools run Backburner for you: queue, edit, retry and cancel tasks, read results, set presence and change settings. Works with Claude Desktop chats, Codex, Gemini CLI, Cursor and Windsurf. | `backburner setup`, or `backburner connect <agent>` |
 
 Everything stays on your machine. There is no server and no account to create.
 
 ## How it works
 
-1. **Reading usage.** Claude Code passes your plan's weekly and 5-hour usage to its status line command. `backburner init` makes Backburner that command (your old one still runs and shows first), so every Claude Code session hands it fresh numbers. `backburner probe` gets a reading on demand by starting a tiny Haiku request and stopping it before the model answers.
+1. **Reading usage.** Claude Code passes your plan's weekly and 5-hour usage to its status line command. (Codex writes the same two numbers into its session logs, and Backburner reads them from there. See [Codex and other AI tools](#codex-and-other-ai-tools).) `backburner init` makes Backburner that command (your old one still runs and shows first), so every Claude Code session hands it fresh numbers. `backburner probe` gets a reading on demand by starting a tiny Haiku request and stopping it before the model answers.
 2. **Working out a budget.** Backburner subtracts your weekly cap, today's reserve and every later day's reserve from what's left of the week. Whatever remains is what the queue may spend. See [How the budget works](#how-the-budget-works).
 3. **Knowing whether you're around.** A prompt hook records each Claude Code prompt you send, and in `auto` mode Backburner also checks keyboard and mouse idle time. When you're active it holds back so it doesn't eat into your 5-hour window.
-4. **Running a task.** Every 10 minutes the background job runs `backburner tick`. If the next task's estimate fits the budget, it starts the regular `claude` CLI headless (`claude -p --output-format stream-json --permission-mode dontAsk`) with only the tools that kind of task may use, and sends the prompt on stdin.
+4. **Running a task.** Every 10 minutes the background job runs `backburner tick`. If the next task's estimate fits the budget, it starts the regular `claude` CLI headless (`claude -p --output-format stream-json --permission-mode dontAsk`) with only the tools that kind of task may use, and sends the prompt on stdin. With Codex, it runs `codex exec` in a read-only sandbox for research and a workspace-only sandbox for code.
 5. **Saving the result.** The final answer goes to `~/.backburner/results/<task id>/<run id>.md`, with the full run transcript next to it as `.jsonl`. Coding tasks commit to a new branch in a git worktree and can open a draft PR.
-6. **Learning.** Backburner reads the weekly % before and after each run, records what the task actually cost, and uses your own medians for future estimates.
+6. **Learning.** Backburner reads the weekly % before and after each run, records what the task actually cost, and uses your own medians for future estimates (kept separately for each plan).
 
 ## Package details
 
 | | |
 | --- | --- |
 | Package name | `backburner-cc` (installs the `backburner` command) |
-| Version | 0.2.0 |
+| Version | 0.3.0 |
 | Where to get it | This GitHub repo. It isn't published to the npm registry, so install from the archive URL below. |
 | Runtime | Node.js 20 or newer, with no runtime dependencies |
 | Platforms | Windows 10/11, macOS, Linux |
 | Claude Code mod | Plugin `backburner` in the marketplace `MeagerPotato/backburner` (the `plugin/` folder): the prompt band, slash commands, Backburner's tools and the `manage-queue` skill |
-| Chat connector | A stdio MCP server built into the CLI (`backburner mcp`), added to Claude Desktop by `backburner desktop install` |
+| Agent connections | A stdio MCP server built into the CLI (`backburner mcp`), added to each AI tool by `backburner connect`; Codex also gets a `backburner` skill |
+| Installers | `install.sh` (macOS, Linux) and `install.ps1` (Windows) in this repo |
 | License | MIT |
 
 ## Requirements
 
 - [Node.js](https://nodejs.org) 20 or newer
 - [Git](https://git-scm.com), for coding tasks (they run in git worktrees)
-- [Claude Code](https://code.claude.com) installed and signed in with a Pro or Max plan
+- At least one of:
+  - [Claude Code](https://code.claude.com), signed in with a Claude Pro or Max plan
+  - [Codex CLI](https://github.com/openai/codex), signed in with a ChatGPT Plus, Pro, Business or Enterprise plan
 - Optional: the [GitHub CLI](https://cli.github.com) (`gh`), signed in, if you want coding tasks to open draft pull requests
 
 Works on Windows, macOS and Linux.
 
 ## Install
 
+One line. The installer checks for Node.js, installs the `backburner` command, and starts `backburner setup`, which finds the AI tools on your computer and asks which ones to connect.
+
+**macOS or Linux:**
+
+```
+curl -fsSL https://raw.githubusercontent.com/MeagerPotato/backburner/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```
+irm https://raw.githubusercontent.com/MeagerPotato/backburner/main/install.ps1 | iex
+```
+
+On Windows, if Node.js is missing, the installer offers to install it with `winget`. On macOS and Linux it tells you where to get it.
+
+Prefer to do it yourself? This is all the installer does:
+
 ```
 npm install -g https://github.com/MeagerPotato/backburner/archive/refs/heads/main.tar.gz
 backburner setup
 ```
 
-`setup` asks five short questions (time zone, daily reserves, weekly cap, release hour, and whether to add the background job and chat connector), then:
+`setup` finds Claude Code, Claude Desktop, Codex, Gemini CLI, Cursor and Windsurf, asks which plans the queue may spend (Claude, ChatGPT through Codex, or both), then asks a few short questions (time zone, daily reserves, weekly cap, release hour). It then:
 
 1. Writes `~/.backburner/config.json`.
-2. Points Claude Code's status line at Backburner, which is how it reads your usage. If you already had a status line (a usage meter, for example), it keeps running and its output still shows first. Your old settings file is backed up next to the original.
+2. Points Claude Code's status line at Backburner, which is how it reads your Claude usage. If you already had a status line (a usage meter, for example), it keeps running and its output still shows first. Your old settings file is backed up next to the original.
 3. Adds a prompt hook so Backburner knows when you're using Claude Code.
-4. Registers the background job: Windows Task Scheduler, a launchd agent on macOS, or a systemd user timer on Linux.
-5. Optionally adds the chat connector to Claude Desktop.
+4. Connects each AI tool you say yes to, so you can manage the queue by asking it (see [Codex and other AI tools](#codex-and-other-ai-tools)). Every file it changes is backed up first.
+5. Registers the background job: Windows Task Scheduler, a launchd agent on macOS, or a systemd user timer on Linux.
 
-Then add the mod. From any terminal:
+If you use Claude Code, add the mod too. From any terminal:
 
 ```
 claude plugin marketplace add MeagerPotato/backburner
@@ -106,15 +128,16 @@ Inside a Claude Code terminal session, `/plugin marketplace add MeagerPotato/bac
 
 In the Claude Desktop app, where `/plugin` doesn't run: click **+** next to the prompt box, then **Plugins**, **Add marketplace**, enter `MeagerPotato/backburner`, then **Add plugin**.
 
-To update later, run the same `npm install -g` command again. Your settings and queue are kept.
+To update later, run the installer (or the `npm install -g` command) again. Your settings and queue are kept.
 
 <details>
 <summary>Install step by step instead of with the wizard</summary>
 
 ```
-backburner init                 # config, status line and prompt hook
+backburner init                 # config, status line and prompt hook (Claude Code)
+backburner connect codex        # optional: run tasks on Codex, and give it Backburner's tools
+backburner connect claude-desktop   # optional: chat connector for Claude Desktop
 backburner schedule install     # background job every 10 minutes
-backburner desktop install      # optional: chat connector
 backburner config set reserves.mon 5
 backburner config set weeklyCap 95
 ```
@@ -123,7 +146,7 @@ backburner config set weeklyCap 95
 
 ## Quick start
 
-1. Open Claude Code once so Backburner gets its first usage reading (or run `backburner probe`).
+1. Open Claude Code or Codex once so Backburner gets its first usage reading (or run `backburner probe`).
 2. Check the numbers:
 
    ```
@@ -166,14 +189,16 @@ Example: your week resets Sunday night. It's Wednesday, you're at 40%, the cap i
 ## Queueing tasks
 
 ```
-backburner add "<prompt>" [--title <text>] [--dir <path>] [--code] [--priority 1-5] [--deadline YYYY-MM-DD] [--size small|medium|large]
+backburner add "<prompt>" [--title <text>] [--dir <path>] [--code] [--priority 1-5] [--deadline YYYY-MM-DD] [--size small|medium|large] [--engine claude|codex|any]
 ```
 
 Write the prompt so it stands on its own. The run has no memory of your other conversations.
 
 **Research tasks** (the default) can search the web and read files in `--dir` (default: the folder you ran the command in). The report is saved to `~/.backburner/results/<task id>/`.
 
-**Coding tasks** (`--code`) run in a fresh git worktree on a new `backburner/<name>-<id>` branch, so your own checkout is never touched. Backburner commits the changes, and if the repo has a GitHub remote and `gh` is signed in, it pushes the branch and opens a draft pull request. Claude may edit files and run `npm test` and `npm run`, but not other shell commands.
+**Coding tasks** (`--code`) run in a fresh git worktree on a new `backburner/<name>-<id>` branch, so your own checkout is never touched. Backburner commits the changes, and if the repo has a GitHub remote and `gh` is signed in, it pushes the branch and opens a draft pull request. Claude may edit files and run `npm test` and `npm run`, but not other shell commands. Codex may edit files and run commands inside the worktree only, with no network.
+
+**Which plan.** With more than one plan turned on, a task runs on whichever plan has room, so spare Codex usage picks up when Claude's is spent and the other way round. Pin a task with `--engine claude` or `--engine codex`.
 
 **Order.** Tasks run by earliest deadline, then highest priority (1 low to 5 high), then oldest first. A task starts only if its estimate fits the current budget.
 
@@ -231,6 +256,41 @@ Things you can say in either place:
 
 The chat connector's tools are `add_task`, `list_tasks`, `update_task`, `retry_task`, `cancel_task`, `get_result`, `get_budget`, `set_presence`, `get_settings` and `change_setting`. For safety, chat can't change the tools a queued run may use (`run.researchTools`, `run.codeTools`) or the path to the `claude` CLI; change those in a terminal. Coding tasks from chat need the repo's full path.
 
+## Codex and other AI tools
+
+Backburner isn't only for Claude. Two separate things can be turned on for other tools:
+
+1. **Spending a ChatGPT plan (Codex).** Queued tasks run with the official Codex CLI (`codex exec`), paced by your ChatGPT plan's own weekly and 5-hour limits, with the same reserves and cap as Claude.
+2. **Managing the queue by asking.** Any tool that supports MCP servers gets Backburner's tools, so you can say "put this on the backburner" in that tool and it queues the task.
+
+This is the fix for chat apps that stop when they hit a limit and wait for you to come back and say "continue". Hand the work to Backburner instead, and it runs to the end on its own, on whichever plan has usage to spare.
+
+| Tool | Can run queued tasks | Can manage the queue | What `backburner connect` changes |
+| --- | --- | --- | --- |
+| Claude Code | Yes (Claude plan) | Yes, with the mod | `~/.claude/settings.json` (status line and prompt hook) |
+| Claude Desktop chats | No (they share the Claude plan) | Yes | `claude_desktop_config.json` |
+| Codex CLI and IDE extension | Yes (ChatGPT plan) | Yes, plus a skill | `~/.codex/config.toml` (`[mcp_servers.backburner]`) and `~/.codex/skills/backburner/SKILL.md` |
+| Gemini CLI | No | Yes | `~/.gemini/settings.json` |
+| Cursor | No | Yes | `~/.cursor/mcp.json` |
+| Windsurf | No | Yes | `~/.codeium/windsurf/mcp_config.json` |
+
+`backburner setup` asks about each tool it finds. You can also do it any time:
+
+```
+backburner agents                 # which tools are on this computer, and which are connected
+backburner connect codex cursor   # connect some
+backburner connect --all          # connect every tool found
+backburner disconnect gemini      # undo one
+```
+
+Every file is backed up next to the original before Backburner changes it, and only Backburner's own entry is touched. Restart the tool after connecting it.
+
+**How Codex usage is read.** Codex saves each session to `~/.codex/sessions/` (or `$CODEX_HOME/sessions/`), and after each model call it notes how much of the 5-hour and weekly windows you've used. Backburner reads the newest note. It never reads `auth.json` or your login. If there's no recent session, `backburner probe codex` runs a one-word request to get one.
+
+**Using only Codex.** If you don't have Claude Code, answer no to the Claude question in `setup` (or run `backburner config set engines codex`). Everything else works the same.
+
+**The ChatGPT website and app** can't reach programs on your computer, so they can't queue tasks for Backburner. Queue from Codex (the CLI, or the Codex extension in VS Code, Cursor or Windsurf), from any connected tool, or with `backburner add`.
+
 ## Presence
 
 | Mode | What the queue does |
@@ -238,6 +298,8 @@ The chat connector's tools are `add_task`, `list_tasks`, `update_task`, `retry_t
 | `active` | Starts a task only if your 5-hour window is under 50%, so it doesn't crowd you out. |
 | `away` | Runs freely within the budget (up to 90% of the 5-hour window). |
 | `auto` (default) | Counts you as away once you haven't sent a Claude Code prompt and haven't touched the keyboard or mouse for 30 minutes. |
+
+Presence applies to every plan. The 5-hour limits are checked against each plan's own window.
 
 Set it with `backburner away`, `backburner active` or `backburner auto`, or with the mod's buttons. On Linux, `auto` needs `xprintidle` to see keyboard and mouse activity; without it, only Claude Code prompts count.
 
@@ -255,15 +317,18 @@ backburner config set guard off     # stay quiet
 
 | Command | What it does |
 | --- | --- |
-| `backburner setup` | Guided install |
+| `backburner setup` | Guided install: finds your AI tools and connects the ones you pick |
+| `backburner agents` | Which AI tools are on this computer, and which are connected |
+| `backburner connect <agent>...` / `--all` | Connect `claude-code`, `claude-desktop`, `codex`, `gemini`, `cursor` or `windsurf` |
+| `backburner disconnect <agent>...` / `--all` | Disconnect them again |
 | `backburner init` | Create the config and connect to Claude Code's status line and prompt hook |
 | `backburner schedule install` / `uninstall` | Add or remove the background job |
-| `backburner desktop install` / `uninstall` | Add or remove the Claude Desktop chat connector |
-| `backburner uninstall` | Undo `init`, remove the background job and the chat connector |
-| `backburner status [--json]` | Budget, reserves, presence and queue |
+| `backburner desktop install` / `uninstall` | Same as `connect claude-desktop` / `disconnect claude-desktop` |
+| `backburner uninstall` | Disconnect every tool and remove the background job |
+| `backburner status [--json]` | Budget, reserves, presence and queue, for each plan |
 | `backburner add "<prompt>" [options]` | Queue a task (see [Queueing tasks](#queueing-tasks)) |
 | `backburner list [--all] [--json]` | Queued tasks, or all tasks with results |
-| `backburner edit <id> [options]` | Change a queued task: `--prompt`, `--title`, `--priority`, `--deadline` (`""` clears it), `--size`, `--code --dir <path>` or `--research` |
+| `backburner edit <id> [options]` | Change a queued task: `--prompt`, `--title`, `--priority`, `--deadline` (`""` clears it), `--size`, `--engine claude\|codex\|any`, `--code --dir <path>` or `--research` |
 | `backburner remove <id>` | Cancel a task (`cancel` works too) |
 | `backburner retry <id>` | Queue a failed, cancelled or finished task again |
 | `backburner result <id>` | Print a finished task's report, or its branch and PR |
@@ -271,7 +336,7 @@ backburner config set guard off     # stay quiet
 | `backburner config` | Print the config |
 | `backburner config set <key> <value>` | Change a setting |
 | `backburner tick [--dry-run]` | One scheduler pass; `--dry-run` shows what it would do |
-| `backburner probe` | Read fresh usage numbers now (a tiny Haiku call that stops before the model answers) |
+| `backburner probe [claude\|codex]` | Read fresh usage numbers now (for Claude, a tiny Haiku call that stops before the model answers; for Codex, a one-word request) |
 | `backburner log [-n 30]` | Recent activity |
 
 ## Settings reference
@@ -280,6 +345,7 @@ Change any of these with `backburner config set <key> <value>`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `engines` | `claude` (setup adds `codex` if you say yes) | Plans the queue may spend, comma separated, e.g. `claude,codex` |
 | `timezone` | your system's | IANA time zone for day boundaries, e.g. `America/Los_Angeles` |
 | `reserves.mon` ... `reserves.sun` | 5 weekdays, 3 weekends | Weekly % held each day for your own use |
 | `weeklyCap` | 95 | The queue never takes weekly usage past this % |
@@ -293,10 +359,13 @@ Change any of these with `backburner config set <key> <value>`.
 | `run.timeoutMinutes` | 60 | Stop a run after this long |
 | `run.openDraftPr` | true | Push and open a draft PR after coding tasks |
 | `run.claudePath` | found at setup | Full path to the `claude` CLI |
+| `codex.model` | Codex's default | Model for queued Codex runs |
+| `codex.search` | true | Let Codex research tasks search the web |
+| `codex.path` | found at setup | Full path to the `codex` CLI |
 | `guard` | `warn` | Pace guard: `off`, `warn` or `block` |
 | `statusline.showLine` | true | Show Backburner's line in the Claude Code status line |
 
-Lists such as `run.researchTools` and `run.codeTools` (the tools a queued run may use) can be edited in `~/.backburner/config.json` directly.
+Lists such as `run.researchTools` and `run.codeTools` (the tools a queued Claude run may use) can be edited in `~/.backburner/config.json` directly. Reserves, the cap and the release hour apply to every plan.
 
 ## Where things live
 
@@ -314,7 +383,9 @@ Everything is in `~/.backburner/` (`%USERPROFILE%\.backburner\` on Windows). Set
 
 ## Troubleshooting
 
-**"No weekly usage reading yet."** Open a Claude Code session (the status line feeds Backburner) or run `backburner probe`.
+**"No weekly usage reading yet."** Open a Claude Code session (the status line feeds Backburner) or run `backburner probe`. For Codex, run any Codex session, or `backburner probe codex`. Codex must be signed in with a ChatGPT plan; with an API key there's no weekly limit to read.
+
+**A tool doesn't show Backburner's tools after `connect`.** Restart it. Check with `backburner agents`, and in Codex with `codex mcp list`.
 
 **Nothing runs.** Run `backburner tick --dry-run` to see why. Common reasons: the queue is empty, the next task's estimate doesn't fit the budget, you're marked active and the 5-hour window is over 50%, or the computer was asleep. Background runs need the computer on and you signed in.
 
@@ -332,18 +403,19 @@ Everything is in `~/.backburner/` (`%USERPROFILE%\.backburner\` on Windows). Set
 
 ## Terms of service
 
-Backburner is built to stay inside Anthropic's rules for subscription use:
+Backburner is built to stay inside the providers' rules for subscription use:
 
 - It runs the unmodified `claude` binary and never calls the model any other way.
 - It never reads your Claude login token or session cookie. Usage comes from the numbers Claude Code itself passes to status line commands and prints in its `stream-json` output.
 - It runs on your machine, for your own account. There's no hosted version.
+- With Codex, the same holds: it runs the unmodified `codex` binary, reads usage from the session logs Codex writes, and never reads `~/.codex/auth.json`.
 
-Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) and [Claude Code legal page](https://code.claude.com/docs/en/legal-and-compliance) can change, so read them yourself. Advertised plan limits "assume ordinary, individual usage."
+Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), the [Claude Code legal page](https://code.claude.com/docs/en/legal-and-compliance) and OpenAI's [Terms of Use](https://openai.com/policies/terms-of-use) can change, so read them yourself. Advertised plan limits "assume ordinary, individual usage."
 
 ## Uninstall
 
 ```
-backburner uninstall           # restores your status line, removes the hook, the background job and the chat connector
+backburner uninstall           # disconnects every tool (restores your status line) and removes the background job
 npm uninstall -g backburner-cc
 ```
 
