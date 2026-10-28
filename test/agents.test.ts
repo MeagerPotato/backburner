@@ -19,6 +19,7 @@ beforeEach(() => {
   process.env.BACKBURNER_HOME = join(root, "bb");
   process.env.CODEX_HOME = join(root, "codex");
   process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = process.env.HOME; // os.homedir() reads this one on Windows
   process.env.CLAUDE_CONFIG_DIR = join(root, "claude");
   mkdirSync(process.env.HOME, { recursive: true });
 });
