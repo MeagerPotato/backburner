@@ -20,10 +20,20 @@ export interface RunResult {
 
 const isWin = process.platform === "win32";
 
-/** On Windows, npm installs `claude` as a .cmd shim, which only starts through a shell. */
 function quote(arg: string): string {
-  if (!isWin || !/[\s"&|<>^()]/.test(arg)) return arg;
+  if (!/[\s"&|<>^()]/.test(arg)) return arg;
   return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/**
+ * How to start a command. On Windows, an npm `.cmd` shim (or a bare name that may
+ * resolve to one) only starts through cmd.exe; an `.exe` starts directly. When a shell
+ * is needed, the command line is joined here rather than handing Node an args array
+ * with `shell: true`, which Node 24 warns about (DEP0190).
+ */
+export function launch(cmd: string, args: string[]): { file: string; args: string[]; shell: boolean } {
+  if (!isWin || /\.(exe|com)$/i.test(cmd)) return { file: cmd, args, shell: false };
+  return { file: [cmd, ...args].map(quote).join(" "), args: [], shell: true };
 }
 
 interface ClaudeRun {
@@ -57,9 +67,10 @@ export function runClaude(opts: {
   if (model) args.push("--model", model);
 
   return new Promise((resolve) => {
-    const child = spawn(quote(opts.config.run.claudePath), args.map(quote), {
+    const cmd = launch(opts.config.run.claudePath, args);
+    const child = spawn(cmd.file, cmd.args, {
       cwd: opts.cwd,
-      shell: isWin,
+      shell: cmd.shell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -155,7 +166,8 @@ function git(cwd: string, args: string[]): string {
 
 function hasCommand(cmd: string): boolean {
   try {
-    execFileSync(cmd, ["--version"], { stdio: "ignore", windowsHide: true, shell: isWin });
+    const c = launch(cmd, ["--version"]);
+    execFileSync(c.file, c.args, { stdio: "ignore", windowsHide: true, shell: c.shell });
     return true;
   } catch {
     return false;
