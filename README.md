@@ -69,6 +69,14 @@ With the mod installed, a band above the prompt shows your weekly %, what the qu
 
 The mod also feeds Backburner the usage numbers each session sees, which matters in the Desktop app, where the status line doesn't run.
 
+### From regular Claude chat
+
+```
+backburner desktop install
+```
+
+This adds Backburner as an MCP server in Claude Desktop (your old config is backed up first). Quit and reopen the app, and any chat can queue work: "queue a research task for Backburner: compare the three cheapest flights SFO to Taipei in late December." Claude writes a prompt that stands alone, picks a size, and calls `add_task`. It can also list and cancel tasks and show the budget. Coding tasks from chat need the repo's full path.
+
 ### Pace guard
 
 If your own use today runs past today's reserve and starts eating into later days', the mod tells you once a day. Choose what it does with `backburner config set guard warn|block|off`: `warn` (the default) shows a toast, `block` holds back the first prompt that day until you send it again, and `off` stays quiet.
@@ -114,7 +122,6 @@ npm uninstall -g backburner-cc
 
 ## Roadmap
 
-- Adding tasks from regular Claude chat through a local MCP server
 - Task sizing by Haiku when you add a task
 
 ## License
