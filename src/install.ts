@@ -16,7 +16,7 @@ export function cliPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "cli.js");
 }
 
-function which(cmd: string): string | undefined {
+export function which(cmd: string): string | undefined {
   try {
     const out = execFileSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8", windowsHide: true });
     const hits = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);

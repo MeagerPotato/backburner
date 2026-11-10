@@ -16,6 +16,8 @@ export interface TaskChanges {
   /** Empty string clears the deadline. */
   deadline?: string;
   size?: string;
+  /** claude, codex, or "any" to run on whichever plan has room. */
+  engine?: string;
 }
 
 const SIZES = ["small", "medium", "large"];
@@ -52,6 +54,11 @@ export function updateTask(id: string, c: TaskChanges): Outcome {
   if (c.size !== undefined) {
     if (!SIZES.includes(c.size)) return { ok: false, error: "size must be small, medium or large." };
     next.size = c.size as Size;
+  }
+  if (c.engine !== undefined) {
+    const e = c.engine.trim().toLowerCase();
+    if (!["claude", "codex", "any", ""].includes(e)) return { ok: false, error: "engine must be claude, codex or any." };
+    next.engine = e === "claude" || e === "codex" ? e : undefined;
   }
   Object.assign(t, next);
   saveTasks(tasks);
