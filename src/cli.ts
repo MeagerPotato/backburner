@@ -12,7 +12,8 @@ import {
   unwireClaudeSettings,
   wireClaudeSettings,
 } from "./install.js";
-import { serve } from "./mcp.js";
+import { cancelTask, readResult, retryTask, updateTask } from "./manage.js";
+import { callTool, INSTRUCTIONS, serve, TOOLS } from "./mcp.js";
 import { setupWizard } from "./setup.js";
 import { paths } from "./paths.js";
 import { setMode, touchActivity } from "./presence.js";
@@ -42,7 +43,10 @@ Every day
       --title <text>  --dir <path>  --code  --priority 1-5
       --deadline YYYY-MM-DD  --size small|medium|large
   backburner list [--all]         Show queued (or all) tasks with estimates
+  backburner edit <id> [options]  Change a queued task (same options as add, plus --prompt)
   backburner remove <id>          Cancel a task
+  backburner retry <id>           Queue a failed, cancelled or finished task again
+  backburner result <id>          Print a finished task's report, or its branch and PR
   backburner away | active | auto Set your presence (auto watches for idle time)
 
 Settings
@@ -164,6 +168,31 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
 
+    case "tools": {
+      // For the Claude Code mod: the tools it registers, and the guidance Claude reads.
+      console.log(JSON.stringify({ instructions: INSTRUCTIONS, tools: TOOLS }));
+      return;
+    }
+
+    case "call": {
+      // For the Claude Code mod: run one tool with JSON arguments on stdin.
+      const name = rest[0];
+      if (!name) fail("Usage: backburner call <tool> < args.json");
+      const raw = (await readStdin()).trim();
+      let args: Record<string, unknown> = {};
+      try {
+        args = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      } catch {
+        fail("call expects JSON arguments on stdin");
+      }
+      try {
+        console.log(JSON.stringify(callTool(name, args)));
+      } catch (e) {
+        console.log(JSON.stringify({ content: [{ type: "text", text: `Backburner error: ${(e as Error).message}` }], isError: true }));
+      }
+      return;
+    }
+
     case "mcp": {
       await serve();
       return;
@@ -229,12 +258,53 @@ async function main(argv: string[]): Promise<void> {
 
     case "remove":
     case "cancel": {
-      const tasks = loadTasks();
-      const t = rest[0] ? findTask(tasks, rest[0]) : undefined;
-      if (!t) fail(`No single task matches "${rest[0] ?? ""}"`);
-      t.status = "cancelled";
-      saveTasks(tasks);
-      console.log(`Cancelled ${t.id}: ${t.title}`);
+      const r = cancelTask(rest[0] ?? "");
+      if (!r.ok) fail(r.error);
+      console.log(`Cancelled ${r.task.id}: ${r.task.title}`);
+      return;
+    }
+
+    case "edit": {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        allowPositionals: true,
+        options: {
+          prompt: { type: "string" },
+          title: { type: "string" },
+          dir: { type: "string" },
+          code: { type: "boolean" },
+          research: { type: "boolean" },
+          priority: { type: "string" },
+          deadline: { type: "string" },
+          size: { type: "string" },
+        },
+      });
+      if (!positionals[0]) fail("Usage: backburner edit <id> [--prompt <text>] [--title <text>] [--priority 1-5] [--deadline YYYY-MM-DD|\"\"] [--size small|medium|large] [--code --dir <path> | --research]");
+      const r = updateTask(positionals[0], {
+        prompt: values.prompt,
+        title: values.title,
+        mode: values.code ? "code" : values.research ? "research" : undefined,
+        dir: values.dir ? resolve(values.dir) : undefined,
+        priority: values.priority === undefined ? undefined : Number(values.priority),
+        deadline: values.deadline,
+        size: values.size,
+      });
+      if (!r.ok) fail(r.error);
+      console.log(`Updated ${r.task.id}: ${r.task.title} (P${r.task.priority} ${r.task.mode} ${r.task.size}${r.task.deadline ? ` due ${r.task.deadline}` : ""})`);
+      return;
+    }
+
+    case "retry": {
+      const r = retryTask(rest[0] ?? "");
+      if (!r.ok) fail(r.error);
+      console.log(`Queued again ${r.task.id}: ${r.task.title}`);
+      return;
+    }
+
+    case "result": {
+      const r = readResult(rest[0] ?? "", Number.POSITIVE_INFINITY);
+      if (!r.ok) fail(r.error);
+      console.log(r.text);
       return;
     }
 
